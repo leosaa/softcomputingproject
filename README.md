@@ -7,5 +7,5 @@ Soft Computing Project
 ## Install the dependencies
 
 ```
-pip -r requeriments.txt
+pip install -r requeriments.txt
 ```
