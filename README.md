@@ -1,11 +1,13 @@
 # softcomputingproject
 Soft Computing Project
-## Requeriments
+## Requirements
+Required packages
+- TensorFlow
 
 ## How to run
 
 ## Install the dependencies
 
 ```
-pip install -r requeriments.txt
+pip install -r requirements.txt
 ```
