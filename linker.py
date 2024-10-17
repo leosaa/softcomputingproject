@@ -14,22 +14,19 @@ PATH = 'https://www.cs.nmt.edu/~leo/CREMA-D/AudioWAV' # Path to the dataset
 # TODO: Change this function to pull from the web request
 def prepare_dataset(dataset_path):
     features = []
+    labels = []
 
     # Extract features for each audio file in the dataset
     for audio_filename in os.listdir(dataset_path):
         if(not audio_filename.endswith(".wav")): # Skip non-wav files
             continue
+        # Get the label from the filename
+        labels.append(audio_filename.split('_')[3])  # Assuming the label is the third part of the filename
+
+        # Extract features from the audio file
         features.append(audio_processor.extract_features(audio_filename))    
 
-    return features
-
-
-def get_labels(label_path):
-    labels = []
-    with open(label_path, 'r') as f:
-        for line in f:
-            labels.append(line.strip())
-    return labels
+    return features, labels
 
 
 # From our extracted features, build our tensors for training
@@ -76,10 +73,9 @@ def train_model(features, labels):
 
 
 def main():
-    features = prepare_dataset(PATH)
-
     # Build the dataset
-    labels = get_labels(PATH) # Assuming labels are stored in a text file
+    features, labels = prepare_dataset(PATH)
+
     # Build the tensors
     features_tensor, labels_tensor = build_tensors(features, labels)
 
