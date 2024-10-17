@@ -1,18 +1,5 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: hydrogen
-#       format_version: '1.3'
-#       jupytext_version: 1.16.4
-#   kernelspec:
-#     display_name: .env.venv
-#     language: python
-#     name: python3
-# ---
+# Copy of the .ipynb file in .py format for vim nerds
 
-# %%
 import audio_processor.ipynb # import the audio_processor module (Trust that groupmates have implemented the module)
 import model_trainer.ipynb # import the model_trainer module (Trust that groupmates have implemented the module)
 import tensorflow as tf # import tensorflow for model training
@@ -21,10 +8,10 @@ import os
 
 RAND_SEED = 42
 SPLIT_RATIO = 0.8
+PATH = 'https://www.cs.nmt.edu/~leo/CREMA-D/AudioWAV' # Path to the dataset
 
 
-# %%
-# For every audio file in the dataset, extract the features and store them in a list
+# TODO: Change this function to pull from the web request
 def prepare_dataset(dataset_path):
     features = []
 
@@ -36,6 +23,7 @@ def prepare_dataset(dataset_path):
 
     return features
 
+
 def get_labels(label_path):
     labels = []
     with open(label_path, 'r') as f:
@@ -44,7 +32,6 @@ def get_labels(label_path):
     return labels
 
 
-# %%
 # From our extracted features, build our tensors for training
 def build_tensors(features, labels):
     # Convert the features and labels to TensorFlow tensors
@@ -58,7 +45,6 @@ def build_tensors(features, labels):
     return features_tensor, labels_tensor
 
 
-# %%
 # From our dataset, pseudo-randomly shuffle the data & split it into training and testing sets
 def split_dataset(features, labels, ratio=SPLIT_RATIO, seed=RAND_SEED):
     # Where features and labels are TensorFlow tensors
@@ -84,26 +70,28 @@ def split_dataset(features, labels, ratio=SPLIT_RATIO, seed=RAND_SEED):
     return train_features, train_labels, test_features, test_labels
 
 
-# %%
 # Train the model using the extracted features
 def train_model(features, labels):
     return model_trainer.train_model(features, labels)
 
 
-# %%
-PATH = './dataset' # Path to the dataset
+def main():
+    features = prepare_dataset(PATH)
 
-# Build the dataset
-features = prepare_dataset(PATH)
-labels = get_labels('{PATH}/labels.txt') # Assuming labels are stored in a text file
-# Build the tensors
-features_tensor, labels_tensor = build_tensors(features, labels)
+    # Build the dataset
+    labels = get_labels(PATH) # Assuming labels are stored in a text file
+    # Build the tensors
+    features_tensor, labels_tensor = build_tensors(features, labels)
 
-# Split the dataset
-train_features, train_labels, test_features, test_labels = split_dataset(features_tensor, labels_tensor)
+    # Split the dataset
+    train_features, train_labels, test_features, test_labels = split_dataset(features_tensor, labels_tensor)
 
-# Train the model
-model = train_model(train_features, train_labels)
+    # Train the model
+    model = train_model(train_features, train_labels)
 
-# Test the model
-model.test_model(test_features, test_labels)
+    # Test the model
+    model.test_model(test_features, test_labels)
+
+
+if __name__ == '__main__':
+    main()
