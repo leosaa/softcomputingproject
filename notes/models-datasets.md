@@ -12,6 +12,9 @@ Publicly available models that we can use for reference.
 
 ---
 
+Used as reference for our first test model
+[https://arxiv.org/pdf/2109.07916]
+
 # Datasets
 
 A list of datasets. Please add notes to each entry as used/needed.

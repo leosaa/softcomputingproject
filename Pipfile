@@ -9,8 +9,8 @@ tensorflow = "*"
 keras-tuner = "*"
 tensorflow-datasets = "*"
 tensorflow-io = "*"
+matplotlib = "*"
 
 [dev-packages]
 
 [requires]
-python_version = "3.12"
