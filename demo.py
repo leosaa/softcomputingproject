@@ -11,18 +11,6 @@ import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-def download_model():
-    url = 'http://www.cs.nmt.edu/~leo/CREMA-D/test-b6-e200.weights.h5'
-
-    file_name = os.path.join('models', 'test-b6-e200.weights.h5')
-
-    if not os.path.exists('models'):
-        os.makedirs('models')
-
-    if not os.path.exists(file_name):
-        urllib.request.urlretrieve(url=url, filename=file_name)
-
-
 def predict(audio: np.ndarray, model: keras.Sequential) -> str:
 
     spect = get_spectrogram(audio, 512)
@@ -70,9 +58,9 @@ class EmotionClassifier(object):
             time.sleep(2.0)
 
 
-download_model()
+model_name = 'base1-e50.keras'
 model = keras.models.load_model(
-    os.path.join('models', 'test-b6-e200.keras'))
+    os.path.join('models', model_name))
 audio = EmotionClassifier(model)
 audio.start()     # open the the stream
 audio.mainloop()  # main operations with librosa
