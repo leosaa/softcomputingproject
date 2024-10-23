@@ -14,13 +14,14 @@ import matplotlib.pyplot as plt
 def get_spectrogram(waveform, window_size: int):
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
-        waveform, nfft=window_size, window=window_size, stride=window_size)
+        waveform, nfft=window_size, window=window_size, stride=window_size
+    )
 
     mel_spectrogram = tfio.audio.melscale(
-        spectrogram, rate=16000, mels=64, fmin=0, fmax=8000)
-# Convert to db scale mel-spectrogram
-    dbscale_mel_spectrogram = tfio.audio.dbscale(
-        mel_spectrogram, top_db=80)
+        spectrogram, rate=16000, mels=64, fmin=0, fmax=8000
+    )
+    # Convert to db scale mel-spectrogram
+    dbscale_mel_spectrogram = tfio.audio.dbscale(mel_spectrogram, top_db=80)
     # Obtain the magnitude of the STFT.
     # dbscale_mel_spectrogram = tf.abs(spectrogram)
 
@@ -32,7 +33,10 @@ def get_spectrogram(waveform, window_size: int):
 
 
 def make_spec_ds(ds: Dataset, window_size: int) -> Dataset:
-    return ds.map(map_func=lambda audio, label: (get_spectrogram(audio, window_size), label), num_parallel_calls=tf.data.AUTOTUNE)
+    return ds.map(
+        map_func=lambda audio, label: (get_spectrogram(audio, window_size), label),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    )
 
 
 # Remove the extra dimension thats used for audio channels.
@@ -43,21 +47,21 @@ def squeeze(audio, labels):
 
 # Convert the emotion labels to integers for training
 label_map = {
-    'ANG': 0,  # Anger
-    'DIS': 1,  # Disgust
-    'FEA': 2,  # Fear
-    'HAP': 3,  # Happiness
-    'NEU': 4,  # Neutral
-    'SAD': 5   # Sadness
+    "ANG": 0,  # Anger
+    "DIS": 1,  # Disgust
+    "FEA": 2,  # Fear
+    "HAP": 3,  # Happiness
+    "NEU": 4,  # Neutral
+    "SAD": 5,  # Sadness
 }
 
 inv_label_map = {
-    0: 'Anger',  # Anger
-    1: 'Disgust',  # Disgust
-    2: 'Fear',  # Fear
-    3: 'Happiness',  # Happiness
-    4: 'Neutral',  # Neutral
-    5: 'SAD'   # Sadness
+    0: "Anger",  # Anger
+    1: "Disgust",  # Disgust
+    2: "Fear",  # Fear
+    3: "Happiness",  # Happiness
+    4: "Neutral",  # Neutral
+    5: "SAD",  # Sadness
 }
 
 
@@ -70,26 +74,46 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
     # Extract features for each audio file in the dataset
     for _, _, filenames in os.walk("tmp"):
         for filename in filenames:
-            if (not filename.endswith(".wav")):  # Skip non-wav files (this shouldn't happen)
+            if not filename.endswith(
+                ".wav"
+            ):  # Skip non-wav files (this shouldn't happen)
                 print(
-                    f"Skipping {filename} as it is not a .wav file (how did this happen?)")
+                    f"Skipping {filename} as it is not a .wav file (how did this happen?)"
+                )
                 continue
 
             # Get the label from the filename
             # Assuming the label is the third part of the filename
-            labels.append(label_to_int(filename.split('_')[2]))
+            labels.append(label_to_int(filename.split("_")[2]))
 
-    augment = keras.Sequential([
-        keras.layers.RandomTranslation(
-            height_factor=(-0.2, 0.2), width_factor=(-0.2, 0.2), data_format="channels_last"),
-        keras.layers.RandomZoom(
-            height_factor=(-0.2, 0.2), width_factor=(-0.2, 0.2), data_format="channels_last"),
-        keras.layers.RandomFlip("horizontal", data_format="channels_last"),
-    ])
+    augment = keras.Sequential(
+        [
+            keras.layers.RandomTranslation(
+                height_factor=(-0.2, 0.2),
+                width_factor=(-0.2, 0.2),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomZoom(
+                height_factor=(-0.2, 0.2),
+                width_factor=(-0.2, 0.2),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomFlip("horizontal", data_format="channels_last"),
+        ]
+    )
 
     # A lot is going on here, try and set window size to roughly sample_rate*time/64
     train_ds, val_ds = keras.utils.audio_dataset_from_directory(
-        directory="tmp", labels=labels, label_mode="int", batch_size=None, shuffle=True, output_sequence_length=64*window_size, validation_split=0.2, seed=0, subset="both")
+        directory="tmp",
+        labels=labels,
+        label_mode="int",
+        batch_size=None,
+        shuffle=True,
+        output_sequence_length=64 * window_size,
+        validation_split=0.2,
+        seed=0,
+        subset="both",
+    )
 
     # Drop unnecessary channels
     train_ds = train_ds.map(squeeze, tf.data.AUTOTUNE)
@@ -100,23 +124,25 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
     val_ds = make_spec_ds(val_ds, window_size=window_size)
 
     # spl;it the validation set into test and validation pairs
-    test_ds = val_ds.take(math.floor(val_ds.cardinality()/2))
-    val_ds = val_ds.skip(math.ceil((val_ds.cardinality()+1)/2))
+    test_ds = val_ds.take(math.floor(val_ds.cardinality() / 2))
+    val_ds = val_ds.skip(math.ceil((val_ds.cardinality() + 1) / 2))
 
-    train_ds = train_ds.shuffle(
-        shuffle_size*batch_size).batch(batch_size=batch_size)
-    val_ds = val_ds.shuffle(
-        shuffle_size*batch_size).batch(batch_size=batch_size)
-    test_ds = test_ds.shuffle(
-        shuffle_size*batch_size).batch(batch_size=batch_size)
+    train_ds = train_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
+    val_ds = val_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
+    test_ds = test_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
 
     # Augment the dataset with more images for more training data
-    train_ds = train_ds.map(lambda x, y: (
-        augment(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+    train_ds = train_ds.map(
+        lambda x, y: (augment(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE
+    )
 
     print(train_ds.element_spec)
 
-    return train_ds.prefetch(tf.data.AUTOTUNE), val_ds.prefetch(tf.data.AUTOTUNE), test_ds.prefetch(tf.data.AUTOTUNE)
+    return (
+        train_ds.prefetch(tf.data.AUTOTUNE),
+        val_ds.prefetch(tf.data.AUTOTUNE),
+        test_ds.prefetch(tf.data.AUTOTUNE),
+    )
 
 
 def build_model(input_shape, num_classes) -> keras.Sequential:
@@ -124,34 +150,47 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
 
     # This is model is based on the arxiv paper posted in the models-datasets nots file
     model.add(keras.layers.Input(shape=input_shape))
-    model.add(keras.layers.Conv2D(filters=8, kernel_size=5,
-              activation="relu", padding="same"))
+    model.add(
+        keras.layers.Conv2D(filters=8, kernel_size=5, activation="relu", padding="same")
+    )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=16, kernel_size=5,
-              activation="relu", padding="same"))
+    model.add(
+        keras.layers.Conv2D(
+            filters=16, kernel_size=5, activation="relu", padding="same"
+        )
+    )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=100, kernel_size=5,
-              activation="relu", padding="same"))
+    model.add(
+        keras.layers.Conv2D(
+            filters=100, kernel_size=5, activation="relu", padding="same"
+        )
+    )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=200, kernel_size=5,
-              activation="relu", padding="same"))
+    model.add(
+        keras.layers.Conv2D(
+            filters=200, kernel_size=5, activation="relu", padding="same"
+        )
+    )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=200, kernel_size=4,
-              activation="relu", padding="same"))
+    model.add(
+        keras.layers.Conv2D(
+            filters=200, kernel_size=4, activation="relu", padding="same"
+        )
+    )
 
     model.add(keras.layers.Flatten())
 
-    model.add(keras.layers.Dense(4*4*200))
+    model.add(keras.layers.Dense(4 * 4 * 200))
 
-    model.add(keras.layers.Dense(4*200))
+    model.add(keras.layers.Dense(4 * 200))
 
     model.add(keras.layers.Dense(200))
 
@@ -167,7 +206,13 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
     return model
 
 
-def train_and_test(epochs: int = 100, graphs: bool = False, save_model: bool = False, model_file: str = None,ckpt_rate: int = 10):
+def train_and_test(
+    epochs: int = 100,
+    graphs: bool = False,
+    save_model: bool = False,
+    model_file: str = None,
+    ckpt_rate: int = 10,
+):
     """
     Train and test a model
     @param datasets the training validation and testing datasets
@@ -179,32 +224,30 @@ def train_and_test(epochs: int = 100, graphs: bool = False, save_model: bool = F
 
     batch_size = 64
 
-    models_dir = f'models/{model_file}/'
+    models_dir = f"models/{model_file}/"
     checkpoint_path = models_dir + "{epoch:04d}.weights.h5"
 
     train_ds, val_ds, test_ds = create_dataset(batch_size=batch_size)
 
-    if (save_model and not model_file):
-        raise ValueError(
-            "model_file must have a name if save_model is set TRUE")
+    if save_model and not model_file:
+        raise ValueError("model_file must have a name if save_model is set TRUE")
     # saves every 10 epochs
     cp_callback = tf.keras.callbacks.ModelCheckpoint(
-        filepath=checkpoint_path, 
-        verbose=1, 
+        filepath=checkpoint_path,
+        verbose=1,
         save_weights_only=True,
-        save_freq=ckpt_rate*len(train_ds))
+        save_freq=ckpt_rate * len(train_ds),
+    )
 
-    callbacks=[]
+    callbacks = []
 
- 
-    if(save_model):
-        if not os.path.exists('models'):
-            os.makedirs('models')
+    if save_model:
+        if not os.path.exists("models"):
+            os.makedirs("models")
         if not os.path.exists(models_dir):
             os.makedirs(models_dir)
 
         callbacks.append(cp_callback)
-
 
     for example_audio, example_labels in train_ds.take(1):
         shape: Tuple = example_audio[0].shape
@@ -214,42 +257,46 @@ def train_and_test(epochs: int = 100, graphs: bool = False, save_model: bool = F
 
     model.summary()
 
-    history = model.fit(train_ds, validation_data=val_ds, epochs=epochs,callbacks=callbacks)
+    history = model.fit(
+        train_ds, validation_data=val_ds, epochs=epochs, callbacks=callbacks
+    )
 
     # summarize history for accuracy
     if graphs:
-        plt.plot(history.history['accuracy'])
-        plt.plot(history.history['val_accuracy'])
-        plt.title('model accuracy')
-        plt.ylabel('accuracy')
-        plt.xlabel('epoch')
-        plt.legend(['train', 'test'], loc='upper left')
+        plt.plot(history.history["accuracy"])
+        plt.plot(history.history["val_accuracy"])
+        plt.title("model accuracy")
+        plt.ylabel("accuracy")
+        plt.xlabel("epoch")
+        plt.legend(["train", "test"], loc="upper left")
         plt.show()
 
         # summarize history for loss
-        plt.plot(history.history['loss'])
-        plt.plot(history.history['val_loss'])
-        plt.title('model loss')
-        plt.ylabel('loss')
-        plt.xlabel('epoch')
-        plt.legend(['train', 'test'], loc='upper left')
+        plt.plot(history.history["loss"])
+        plt.plot(history.history["val_loss"])
+        plt.title("model loss")
+        plt.ylabel("loss")
+        plt.xlabel("epoch")
+        plt.legend(["train", "test"], loc="upper left")
         plt.show()
 
     model.evaluate(test_ds)
     if save_model:
-        model.save(f'models/{model_file}.keras')
-        np.save(os.path.join(models_dir,'history.npy'),history.history)
-        # To load the history 
+        model.save(f"models/{model_file}.keras")
+        np.save(os.path.join(models_dir, "history.npy"), history.history)
+        # To load the history
         # history=np.load(os.path.join(models_dir,'history.npy'),allow_pickle='TRUE').item()
-
 
     return history, model
 
-def main():
-    epochs=50
-    name="base1"
-    train_and_test(epochs=epochs, graphs=True,
-                   save_model=True, model_file=f'{name}-e{epochs}')
 
-if __name__ == '__main__':
+def main():
+    epochs = 50
+    name = "base1"
+    train_and_test(
+        epochs=epochs, graphs=True, save_model=True, model_file=f"{name}-e{epochs}"
+    )
+
+
+if __name__ == "__main__":
     main()
