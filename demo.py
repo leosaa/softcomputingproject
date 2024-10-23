@@ -30,6 +30,7 @@ def predict(audio: np.ndarray, model: keras.Sequential) -> str:
     predictions = model.predict(spect, verbose=0)
     classes = np.argmax(predictions, axis=1)
 
+    print('Confidence :', predictions[0][classes[0]])
     return inv_label_map[classes[0]]
 
     # Preprocess the dataset into mel spectrograms
