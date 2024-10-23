@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 
 
 def get_spectrogram(waveform, window_size: int):
-    print(waveform.shape)
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
         waveform, nfft=window_size, window=window_size, stride=window_size)
@@ -52,6 +51,15 @@ label_map = {
     'HAP': 3,  # Happiness
     'NEU': 4,  # Neutral
     'SAD': 5   # Sadness
+}
+
+inv_label_map = {
+    0: 'Anger',  # Anger
+    1: 'Disgust',  # Disgust
+    2: 'Fear',  # Fear
+    3: 'Happiness',  # Happiness
+    4: 'Neutral',  # Neutral
+    5: 'SAD'   # Sadness
 }
 
 
@@ -211,7 +219,7 @@ def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100
     model.evaluate(test_ds)
     if not os.path.exists('models'):
         os.makedirs('models')
-    model.save_weights(f'models/{weight_file}.weights.h5')
+    model.save(f'models/{weight_file}.keras')
 
 
 if __name__ == '__main__':
@@ -221,4 +229,3 @@ if __name__ == '__main__':
 
     train_and_test(datasets=datasets, epochs=200, graphs=True,
                    save_weights=True, weight_file="test-b6-e200")
-
