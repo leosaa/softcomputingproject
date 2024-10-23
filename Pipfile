@@ -1,0 +1,16 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+librosa = "*"
+tensorflow = "*"
+keras-tuner = "*"
+tensorflow-datasets = "*"
+tensorflow-io = "*"
+matplotlib = "*"
+
+[dev-packages]
+
+[requires]
