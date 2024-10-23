@@ -12,7 +12,8 @@ from keras import backend as k
 
 import matplotlib.pyplot as plt
 
-def get_spectrogram(waveform,window_size:int):
+
+def get_spectrogram(waveform, window_size: int):
     print(waveform.shape)
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
@@ -33,8 +34,8 @@ def get_spectrogram(waveform,window_size:int):
     return dbscale_mel_spectrogram
 
 
-def make_spec_ds(ds: Dataset, window_size : int) -> Dataset:
-    return ds.map(map_func=lambda audio, label: (get_spectrogram(audio,window_size), label), num_parallel_calls=tf.data.AUTOTUNE)
+def make_spec_ds(ds: Dataset, window_size: int) -> Dataset:
+    return ds.map(map_func=lambda audio, label: (get_spectrogram(audio, window_size), label), num_parallel_calls=tf.data.AUTOTUNE)
 
 
 # Remove the extra dimension thats used for audio channels.
@@ -53,10 +54,12 @@ label_map = {
     'SAD': 5   # Sadness
 }
 
+
 def label_to_int(label):
     return label_map[label]
 
-def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size = 8):
+
+def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8):
     labels: list[int] = []
     # Extract features for each audio file in the dataset
     for _, _, filenames in os.walk("tmp"):
@@ -73,13 +76,14 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size = 
     augment = keras.Sequential([
         keras.layers.RandomTranslation(
             height_factor=(-0.2, 0.2), width_factor=(-0.2, 0.2), data_format="channels_last"),
-        keras.layers.RandomZoom(height_factor=(-0.2, 0.2), width_factor=(-0.2,0.2), data_format="channels_last"),
+        keras.layers.RandomZoom(
+            height_factor=(-0.2, 0.2), width_factor=(-0.2, 0.2), data_format="channels_last"),
         keras.layers.RandomFlip("horizontal", data_format="channels_last"),
     ])
-    
+
     # A lot is going on here, try and set window size to roughly sample_rate*time/64
-    train_ds, val_ds  = keras.utils.audio_dataset_from_directory(
-        directory="tmp", labels=labels, label_mode="int", batch_size=None, shuffle=True, output_sequence_length=64*window_size, validation_split=0.2,seed=0,subset="both")
+    train_ds, val_ds = keras.utils.audio_dataset_from_directory(
+        directory="tmp", labels=labels, label_mode="int", batch_size=None, shuffle=True, output_sequence_length=64*window_size, validation_split=0.2, seed=0, subset="both")
 
     # Drop unnecessary channels
     train_ds = train_ds.map(squeeze, tf.data.AUTOTUNE)
@@ -93,39 +97,49 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size = 
     test_ds = val_ds.take(math.floor(val_ds.cardinality()/2))
     val_ds = val_ds.skip(math.ceil((val_ds.cardinality()+1)/2))
 
-    train_ds = train_ds.shuffle(shuffle_size*batch_size).batch(batch_size=batch_size)
-    val_ds = val_ds.shuffle(shuffle_size*batch_size).batch(batch_size=batch_size)
-    test_ds = test_ds.shuffle(shuffle_size*batch_size).batch(batch_size=batch_size)
+    train_ds = train_ds.shuffle(
+        shuffle_size*batch_size).batch(batch_size=batch_size)
+    val_ds = val_ds.shuffle(
+        shuffle_size*batch_size).batch(batch_size=batch_size)
+    test_ds = test_ds.shuffle(
+        shuffle_size*batch_size).batch(batch_size=batch_size)
 
     # Augment the dataset with more images for more training data
-    train_ds = train_ds.map(lambda x, y: (augment(x,training=True), y),num_parallel_calls=tf.data.AUTOTUNE)
+    train_ds = train_ds.map(lambda x, y: (
+        augment(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
 
     print(train_ds.element_spec)
 
     return train_ds.prefetch(tf.data.AUTOTUNE), val_ds.prefetch(tf.data.AUTOTUNE), test_ds.prefetch(tf.data.AUTOTUNE)
+
 
 def build_model(input_shape, num_classes) -> keras.Sequential:
     model: keras.Sequential = keras.Sequential()
 
     # This is model is based on the arxiv paper posted in the models-datasets nots file
     model.add(keras.layers.Input(shape=input_shape))
-    model.add(keras.layers.Conv2D(filters=8, kernel_size=5, activation="relu",padding="same"))
+    model.add(keras.layers.Conv2D(filters=8, kernel_size=5,
+              activation="relu", padding="same"))
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=16, kernel_size=5, activation="relu",padding="same"))
+    model.add(keras.layers.Conv2D(filters=16, kernel_size=5,
+              activation="relu", padding="same"))
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=100, kernel_size=5, activation="relu",padding="same"))
+    model.add(keras.layers.Conv2D(filters=100, kernel_size=5,
+              activation="relu", padding="same"))
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=200, kernel_size=5, activation="relu",padding="same"))
+    model.add(keras.layers.Conv2D(filters=200, kernel_size=5,
+              activation="relu", padding="same"))
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
 
-    model.add(keras.layers.Conv2D(filters=200, kernel_size=4, activation="relu",padding="same"))
+    model.add(keras.layers.Conv2D(filters=200, kernel_size=4,
+              activation="relu", padding="same"))
 
     model.add(keras.layers.Flatten())
 
@@ -145,8 +159,9 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
     )
 
     return model
-def train_and_test(datasets:Tuple[Dataset,Dataset,Dataset], epochs: int = 100, graphs:bool = False, save_weights: bool=False, weight_file: str = None):
-    
+
+
+def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100, graphs: bool = False, save_weights: bool = False, weight_file: str = None):
     """
     Train and test a model
     @param datasets the training validation and testing datasets
@@ -156,12 +171,13 @@ def train_and_test(datasets:Tuple[Dataset,Dataset,Dataset], epochs: int = 100, g
     @param weight_file name of the model to save, must be set if save_weights is true
     """
 
-    if(save_weights and not weight_file):
-        raise ValueError("weight_file must have a name if save_weights is set TRUE")
-    
+    if (save_weights and not weight_file):
+        raise ValueError(
+            "weight_file must have a name if save_weights is set TRUE")
+
     batch_size = 64
-    
-    train_ds, val_ds,test_ds = create_dataset(batch_size=batch_size)
+
+    train_ds, val_ds, test_ds = create_dataset(batch_size=batch_size)
 
     for example_audio, example_labels in train_ds.take(1):
         shape: Tuple = example_audio[0].shape
@@ -197,9 +213,12 @@ def train_and_test(datasets:Tuple[Dataset,Dataset,Dataset], epochs: int = 100, g
         os.makedirs('models')
     model.save_weights(f'models/{weight_file}.weights.h5')
 
+
 if __name__ == '__main__':
     batch_size = 64
-    
+
     datasets = create_dataset(batch_size=batch_size)
 
-    train_and_test(datasets= datasets, epochs=200,graphs=True,save_weights=True, weight_file="test-b6-e200" )
+    train_and_test(datasets=datasets, epochs=200, graphs=True,
+                   save_weights=True, weight_file="test-b6-e200")
+
