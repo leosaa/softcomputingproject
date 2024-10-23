@@ -7,8 +7,6 @@ import math
 import os
 import numpy as np
 import keras
-import gc
-from keras import backend as k
 
 import matplotlib.pyplot as plt
 
@@ -161,7 +159,7 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
 
     # Compile the model
     model.compile(
-        optimizer=keras.optimizers.Adam(),
+        optimizer=keras.optimizers.Adam(use_ema=True),
         loss=keras.losses.SparseCategoricalCrossentropy(),
         metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
     )
@@ -169,7 +167,7 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
     return model
 
 
-def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100, graphs: bool = False, save_weights: bool = False, weight_file: str = None):
+def train_and_test(epochs: int = 100, graphs: bool = False, save_model: bool = False, model_file: str = None,ckpt_rate: int = 10):
     """
     Train and test a model
     @param datasets the training validation and testing datasets
@@ -179,13 +177,34 @@ def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100
     @param weight_file name of the model to save, must be set if save_weights is true
     """
 
-    if (save_weights and not weight_file):
-        raise ValueError(
-            "weight_file must have a name if save_weights is set TRUE")
-
     batch_size = 64
 
+    models_dir = f'models/{model_file}/'
+    checkpoint_path = models_dir + "{epoch:04d}.weights.h5"
+
     train_ds, val_ds, test_ds = create_dataset(batch_size=batch_size)
+
+    if (save_model and not model_file):
+        raise ValueError(
+            "model_file must have a name if save_model is set TRUE")
+    # saves every 10 epochs
+    cp_callback = tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_path, 
+        verbose=1, 
+        save_weights_only=True,
+        save_freq=ckpt_rate*len(train_ds))
+
+    callbacks=[]
+
+ 
+    if(save_model):
+        if not os.path.exists('models'):
+            os.makedirs('models')
+        if not os.path.exists(models_dir):
+            os.makedirs(models_dir)
+
+        callbacks.append(cp_callback)
+
 
     for example_audio, example_labels in train_ds.take(1):
         shape: Tuple = example_audio[0].shape
@@ -195,7 +214,7 @@ def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100
 
     model.summary()
 
-    history = model.fit(train_ds, validation_data=val_ds, epochs=epochs)
+    history = model.fit(train_ds, validation_data=val_ds, epochs=epochs,callbacks=callbacks)
 
     # summarize history for accuracy
     if graphs:
@@ -217,15 +236,20 @@ def train_and_test(datasets: Tuple[Dataset, Dataset, Dataset], epochs: int = 100
         plt.show()
 
     model.evaluate(test_ds)
-    if not os.path.exists('models'):
-        os.makedirs('models')
-    model.save(f'models/{weight_file}.keras')
+    if save_model:
+        model.save(f'models/{model_file}.keras')
+        np.save(os.path.join(models_dir,'history.npy'),history.history)
+        # To load the history 
+        # history=np.load(os.path.join(models_dir,'history.npy'),allow_pickle='TRUE').item()
 
+
+    return history, model
+
+def main():
+    epochs=50
+    name="base1"
+    train_and_test(epochs=epochs, graphs=True,
+                   save_model=True, model_file=f'{name}-e{epochs}')
 
 if __name__ == '__main__':
-    batch_size = 64
-
-    datasets = create_dataset(batch_size=batch_size)
-
-    train_and_test(datasets=datasets, epochs=200, graphs=True,
-                   save_weights=True, weight_file="test-b6-e200")
+    main()
