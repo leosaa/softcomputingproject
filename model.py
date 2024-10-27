@@ -4,15 +4,63 @@ from tensorflow._api.v2.data import Dataset
 import tensorflow_io as tfio
 import math
 import keras_tuner as kt
-
 import os
 import numpy as np
 import keras
-
+import urllib.request as request
+import ssl # import the ssl module to ignore SSL certificate errors
+import re # import the re module for regular expressions
 import matplotlib.pyplot as plt
 
-RAND_SEED = 0
-EPOCHS = 50
+RAND_SEED = 0 # Random seed for reproducibility
+EPOCHS = 50 # Number of epochs to train for
+DOWNLOAD_FILES = False # Whether or not to download the audio files if they don't exist in the local directory
+DATASET_URL = 'https://www.cs.nmt.edu/~leo/CREMA-D/AudioWAV' # Path to the dataset
+LOCAL_DIR = './tmp' # Local directory to store the dataset
+
+# Download the audio files from the dataset URL
+def download_files(url : str = DATASET_URL, dir : str = LOCAL_DIR) -> None:
+    # Load the file list from the dataset URL
+    filelist = []
+    # Ignore SSL certificate errors (Ty CS Dept)
+    with request.urlopen(url, context=ssl._create_unverified_context()) as response:
+        html = response.read().decode()
+
+    # Get the text located between the <a href="..."> NEEDED_VALUE </a> tag
+    # This is a simple way to extract the filenames from the HTML response
+    filename_regex = re.compile(r'<a href="([^"]+)">([^<]+)</a>')
+
+    # Build a list of all the files in the dataset
+    for line in html.splitlines():
+        if '.wav' in line: # This line contains a .wav file, so extract the filename
+            match = filename_regex.search(line)
+            if match:
+                filelist.append(match.group(1)) # Append the filename to the list
+    
+    # Create the local directory if it doesn't exist
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+    
+    # Download the files
+    total_files = len(filelist)
+    files_downloaded = len([f for f in os.listdir(dir) if f.endswith('.wav')])
+    for file in filelist:
+        # If the file exists in the directory, skip the download
+        if os.path.exists(f'{dir}/{file}'):
+            print(f'{file} already exists in {dir}')
+            return False
+
+        # Download the file from the URL
+        with request.urlopen(f'{url}/{file}', context=ssl._create_unverified_context()) as response:
+            with open(f'{dir}/{file}', 'wb') as file:
+                file.write(response.read())
+        files_downloaded += 1
+        print(f'Downloaded {file} ({files_downloaded}/{total_files} files).')
+        # Print a progress bar
+        print(
+                ('*' * int(50 * (files_downloaded / total_files)))
+            + ('-' * int(50 * (1 - files_downloaded / total_files)))
+            )
 
 # Returns a tensor of the spectrogram of the audio file
 def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
@@ -262,9 +310,9 @@ def build_model(hp: kt.HyperParameters,
 
 
 # Get the hyperparameter tuner
-def getHyperTuner() -> kt.Hyperband:
+def getHyperTuner(shape, classes) -> kt.Hyperband:
     tuner = kt.Hyperband(
-        build_model, # Function to build the model
+        lambda hp: build_model(hp, input_shape=shape, num_classes=classes), # Function to build the model
         objective="val_accuracy", # Objective to optimize
         max_epochs=50, # Maximum number of epochs to train for
         factor=3, # Reduction factor for the number of epochs and number of models
@@ -276,7 +324,7 @@ def getHyperTuner() -> kt.Hyperband:
     return tuner
 
 def train_and_test(
-                   epochs: int = 100,
+                   epochs: int = EPOCHS,
                    graphs: bool = False, 
                    save_model: bool = False, 
                    model_file: str = None,
@@ -332,7 +380,7 @@ def train_and_test(
     callbacks.append(early_stopping)
 
     # Get the hyperparameter tuner
-    tuner = getHyperTuner()
+    tuner = getHyperTuner(shape=shape, classes=6)
 
     # Search for the best hyperparameters
     tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
@@ -385,10 +433,11 @@ def train_and_test(
 
 
 def main():
-    epochs = EPOCHS
+    if DOWNLOAD_FILES:
+        download_files()
     name = "base1"
     train_and_test(
-        epochs=epochs, graphs=True, save_model=True, model_file=f"{name}-e{epochs}"
+        graphs=True, save_model=True, model_file=f"{name}-e{EPOCHS}"
     )
 
 
