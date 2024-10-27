@@ -3,6 +3,7 @@ import tensorflow as tf
 from tensorflow._api.v2.data import Dataset
 import tensorflow_io as tfio
 import math
+import keras_tuner as kt
 
 import os
 import numpy as np
@@ -154,62 +155,105 @@ def create_dataset(batch_size: int = 64,
     )
 
 # Build the model
-def build_model(input_shape: Tuple[int, int, int],
-                num_classes: int) -> keras.Sequential:
+def build_model(hp: kt.HyperParameters,
+                input_shape: Tuple[int, int, int],
+                num_classes: int
+                ) -> keras.Sequential:
     model: keras.Sequential = keras.Sequential()
 
     # This is model is based on the arxiv paper posted in the models-datasets nots file
+
+    # Input layer
     model.add(keras.layers.Input(shape=input_shape))
-    model.add(
-        keras.layers.Conv2D(filters=8, kernel_size=5, activation="relu", padding="same")
-    )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) #(32,32,8)
-    model.add(keras.layers.Dropout(0.2))
 
+    # Convolutional layers
+
+    # Convolutional layer 1
     model.add(
         keras.layers.Conv2D(
-            filters=16, kernel_size=5, activation="relu", padding="same"
+            filters=hp.Int("conv_1_filters", min_value=8, max_value=64, step=8), # Hyperparameter tuned number of filters
+            kernel_size=hp.Choice('conv_1_kernel', values=[3, 5]), # Hyperparameter tuned kernel size between 3 and 5
+            activation="relu",
+            padding="same"
         )
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
+    model.add(keras.layers.Dropout(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
 
+    # Convolutional layer 2
     model.add(
         keras.layers.Conv2D(
-            filters=100, kernel_size=5, activation="relu", padding="same"
+            filters = hp.Int('conv_2_filters', min_value=16, max_value=128, step=16),
+            kernel_size = hp.Choice('conv_2_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
         )
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
+    model.add(keras.layers.Dropout(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
 
+    # Convolutional layer 3
     model.add(
         keras.layers.Conv2D(
-            filters=200, kernel_size=5, activation="relu", padding="same"
+            filters=hp.Int('conv_3_filters', min_value=32, max_value=256, step=32),
+            kernel_size=hp.Choice('conv_3_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
         )
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
-    #(4,4,200)
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
+    model.add(keras.layers.Dropout(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
 
+    # Convolutional layer 4
     model.add(
         keras.layers.Conv2D(
-            filters=200, kernel_size=4, activation="relu", padding="same"
+            filters=hp.Int('conv_4_filters', min_value=64, max_value=512, step=32),
+            kernel_size=hp.Choice('conv_4_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
+        )
+    )
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
+    model.add(keras.layers.Dropout(hp.Float("dropout_4", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+
+    # Convolutional layer 5 (Final convolutional layer)
+    model.add(
+        keras.layers.Conv2D(
+            filters=hp.Int('conv_5_filters', min_value=64, max_value=1024, step=32),
+            kernel_size=hp.Choice('conv_5_kernel', values=range(3, 7)),
+            activation="relu",
+            padding="same"
         )
     )
 
+    # Flatten the output of the convolutional layers
     model.add(keras.layers.Flatten())
 
-    model.add(keras.layers.Dense(4 * 4 * 200))
+    # Dense layers
+    # Dense layer 1 (First fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_1", min_value=64, max_value=1024, step=64), # Hyperparameter tuned number of neurons
+        activation="relu"
+    )) 
 
-    model.add(keras.layers.Dense(4 * 200))
+    # Dense layer 2 (Second fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_2", min_value=32, max_value=512, step=32),
+        activation="relu"
+    ))
 
-    model.add(keras.layers.Dense(200))
+    # Dense layer 3 (Third fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_3", min_value=16, max_value=256, step=16),
+        activation="relu"
+    ))
 
+    # Output layer
     model.add(keras.layers.Dense(num_classes, activation="softmax"))
 
     # Compile the model
     model.compile(
-        optimizer=keras.optimizers.Adam(use_ema=True),
+        optimizer=keras.optimizers.Adam(use_ema=True, learning_rate=hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
         loss=keras.losses.SparseCategoricalCrossentropy(),
         metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
     )
@@ -217,12 +261,27 @@ def build_model(input_shape: Tuple[int, int, int],
     return model
 
 
+# Get the hyperparameter tuner
+def getHyperTuner() -> kt.Hyperband:
+    tuner = kt.Hyperband(
+        build_model, # Function to build the model
+        objective="val_accuracy", # Objective to optimize
+        max_epochs=50, # Maximum number of epochs to train for
+        factor=3, # Reduction factor for the number of epochs and number of models
+        hyperband_iterations=2, # Number of times to iterate over the hyperband algorithm
+        directory="models", # Directory to save the models
+        project_name="hyperband", # Name of the project
+    )
+
+    return tuner
+
 def train_and_test(
                    epochs: int = 100,
                    graphs: bool = False, 
                    save_model: bool = False, 
                    model_file: str = None,
                    ckpt_rate: int = 10,
+                   tuning_epochs: int = 10
                 ) -> Tuple[dict, keras.Sequential]:
     """
     Train and test a model
@@ -242,6 +301,7 @@ def train_and_test(
 
     if save_model and not model_file:
         raise ValueError("model_file must have a name if save_model is set TRUE")
+    
     # saves every 10 epochs
     cp_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_path,
@@ -265,12 +325,32 @@ def train_and_test(
         shape: Tuple = example_audio[0].shape
         print(shape)
 
-    model = build_model(input_shape=shape, num_classes=6)
+    # Early stopping callback to stop training if the model is not improving after 5 epochs
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor="val_accuracy", patience=5, restore_best_weights=True
+    )
+    callbacks.append(early_stopping)
 
+    # Get the hyperparameter tuner
+    tuner = getHyperTuner()
+
+    # Search for the best hyperparameters
+    tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
+    
+    # Get the best hyperparameters
+    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+
+    # Build the model with the best hyperparameters
+    model = tuner.hypermodel.build(best_hps)
+
+    print(f"Best hyperparameters: {best_hps}")
     model.summary()
 
     history = model.fit(
-        train_ds, validation_data=val_ds, epochs=epochs, callbacks=callbacks
+        train_ds,
+        validation_data=val_ds,
+        epochs=epochs,
+        callbacks=callbacks
     )
 
     # summarize history for accuracy
