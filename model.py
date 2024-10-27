@@ -10,8 +10,11 @@ import keras
 
 import matplotlib.pyplot as plt
 
+RAND_SEED = 0
+EPOCHS = 50
 
-def get_spectrogram(waveform, window_size: int):
+# Returns a tensor of the spectrogram of the audio file
+def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
         waveform, nfft=window_size, window=window_size, stride=window_size
@@ -32,6 +35,7 @@ def get_spectrogram(waveform, window_size: int):
     return dbscale_mel_spectrogram
 
 
+# Convert the audio files to spectrograms
 def make_spec_ds(ds: Dataset, window_size: int) -> Dataset:
     return ds.map(
         map_func=lambda audio, label: (get_spectrogram(audio, window_size), label),
@@ -40,7 +44,7 @@ def make_spec_ds(ds: Dataset, window_size: int) -> Dataset:
 
 
 # Remove the extra dimension thats used for audio channels.
-def squeeze(audio, labels):
+def squeeze(audio, labels) -> Tuple[tf.Tensor, tf.Tensor]:
     audio = tf.squeeze(audio, axis=-1)
     return audio, labels
 
@@ -64,12 +68,16 @@ inv_label_map = {
     5: "SAD",  # Sadness
 }
 
-
-def label_to_int(label):
+# Convert the emotion labels to integers for training
+def label_to_int(label) -> int:
     return label_map[label]
 
-
-def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8):
+# Create the dataset from the audio files
+def create_dataset(batch_size: int = 64,
+                   window_size: int = 512,
+                   shuffle_size=8) -> Tuple[Dataset, Dataset, Dataset]:
+    
+    # Get the labels from the filenames
     labels: list[int] = []
     # Extract features for each audio file in the dataset
     for _, _, filenames in os.walk("tmp"):
@@ -86,6 +94,7 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
             # Assuming the label is the third part of the filename
             labels.append(label_to_int(filename.split("_")[2]))
 
+    # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
     augment = keras.Sequential(
         [
             keras.layers.RandomTranslation(
@@ -111,7 +120,7 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
         shuffle=True,
         output_sequence_length=64 * window_size,
         validation_split=0.2,
-        seed=0,
+        seed=RAND_SEED,
         subset="both",
     )
 
@@ -123,7 +132,7 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
     train_ds = make_spec_ds(train_ds, window_size=window_size)
     val_ds = make_spec_ds(val_ds, window_size=window_size)
 
-    # spl;it the validation set into test and validation pairs
+    # split the validation set into test and validation pairs
     test_ds = val_ds.take(math.floor(val_ds.cardinality() / 2))
     val_ds = val_ds.skip(math.ceil((val_ds.cardinality() + 1) / 2))
 
@@ -144,8 +153,9 @@ def create_dataset(batch_size: int = 64, window_size: int = 512, shuffle_size=8)
         test_ds.prefetch(tf.data.AUTOTUNE),
     )
 
-
-def build_model(input_shape, num_classes) -> keras.Sequential:
+# Build the model
+def build_model(input_shape: Tuple[int, int, int],
+                num_classes: int) -> keras.Sequential:
     model: keras.Sequential = keras.Sequential()
 
     # This is model is based on the arxiv paper posted in the models-datasets nots file
@@ -153,7 +163,7 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
     model.add(
         keras.layers.Conv2D(filters=8, kernel_size=5, activation="relu", padding="same")
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) #(32,32,8)
     model.add(keras.layers.Dropout(0.2))
 
     model.add(
@@ -179,6 +189,7 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
     )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
     model.add(keras.layers.Dropout(0.2))
+    #(4,4,200)
 
     model.add(
         keras.layers.Conv2D(
@@ -207,12 +218,12 @@ def build_model(input_shape, num_classes) -> keras.Sequential:
 
 
 def train_and_test(
-    epochs: int = 100,
-    graphs: bool = False,
-    save_model: bool = False,
-    model_file: str = None,
-    ckpt_rate: int = 10,
-):
+                   epochs: int = 100,
+                   graphs: bool = False, 
+                   save_model: bool = False, 
+                   model_file: str = None,
+                   ckpt_rate: int = 10,
+                ) -> Tuple[dict, keras.Sequential]:
     """
     Train and test a model
     @param datasets the training validation and testing datasets
@@ -241,6 +252,7 @@ def train_and_test(
 
     callbacks = []
 
+    # Save the model after training
     if save_model:
         if not os.path.exists("models"):
             os.makedirs("models")
@@ -281,6 +293,8 @@ def train_and_test(
         plt.show()
 
     model.evaluate(test_ds)
+
+    # Save the model
     if save_model:
         model.save(f"models/{model_file}.keras")
         np.save(os.path.join(models_dir, "history.npy"), history.history)
@@ -291,7 +305,7 @@ def train_and_test(
 
 
 def main():
-    epochs = 50
+    epochs = EPOCHS
     name = "base1"
     train_and_test(
         epochs=epochs, graphs=True, save_model=True, model_file=f"{name}-e{epochs}"
