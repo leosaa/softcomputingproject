@@ -12,8 +12,11 @@ import ssl # import the ssl module to ignore SSL certificate errors
 import re # import the re module for regular expressions
 import matplotlib.pyplot as plt
 
+
 RAND_SEED = 0 # Random seed for reproducibility
-EPOCHS = 50 # Number of epochs to train for
+EPOCHS = 100 # Number of epochs to train for
+BATCH_SIZE = 128 # Batch size for training
+REPEAT_COUNT = 4 # How many times to repeat the training data (fluff out the data for faster training on GPU)
 DOWNLOAD_FILES = False # Whether or not to download the audio files if they don't exist in the local directory
 DATASET_URL = 'https://www.cs.nmt.edu/~leo/CREMA-D/AudioWAV' # Path to the dataset
 LOCAL_DIR = './tmp' # Local directory to store the dataset
@@ -126,44 +129,10 @@ def create_dataset(batch_size: int = 64,
                    window_size: int = 512,
                    shuffle_size=8) -> Tuple[Dataset, Dataset, Dataset]:
     
-    # Get the labels from the filenames
-    labels: list[int] = []
-    # Extract features for each audio file in the dataset
-    for _, _, filenames in os.walk("tmp"):
-        for filename in filenames:
-            if not filename.endswith(
-                ".wav"
-            ):  # Skip non-wav files (this shouldn't happen)
-                print(
-                    f"Skipping {filename} as it is not a .wav file (how did this happen?)"
-                )
-                continue
-
-            # Get the label from the filename
-            # Assuming the label is the third part of the filename
-            labels.append(label_to_int(filename.split("_")[2]))
-
-    # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
-    augment = keras.Sequential(
-        [
-            keras.layers.RandomTranslation(
-                height_factor=(-0.2, 0.2),
-                width_factor=(-0.2, 0.2),
-                data_format="channels_last",
-            ),
-            keras.layers.RandomZoom(
-                height_factor=(-0.2, 0.2),
-                width_factor=(-0.2, 0.2),
-                data_format="channels_last",
-            ),
-            keras.layers.RandomFlip("horizontal", data_format="channels_last"),
-        ]
-    )
-
     # A lot is going on here, try and set window size to roughly sample_rate*time/64
     train_ds, val_ds = keras.utils.audio_dataset_from_directory(
         directory="tmp",
-        labels=labels,
+        labels="inferred",
         label_mode="int",
         batch_size=None,
         shuffle=True,
@@ -189,15 +158,12 @@ def create_dataset(batch_size: int = 64,
     val_ds = val_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
     test_ds = test_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
 
-    # Augment the dataset with more images for more training data
-    train_ds = train_ds.map(
-        lambda x, y: (augment(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE
-    )
+
 
     print(train_ds.element_spec)
 
     return (
-        train_ds.prefetch(tf.data.AUTOTUNE),
+        train_ds.repeat(REPEAT_COUNT).prefetch(tf.data.AUTOTUNE),
         val_ds.prefetch(tf.data.AUTOTUNE),
         test_ds.prefetch(tf.data.AUTOTUNE),
     )
@@ -214,6 +180,29 @@ def build_model(hp: kt.HyperParameters,
     # Input layer
     model.add(keras.layers.Input(shape=input_shape))
 
+    # Augment layer
+    # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
+    hp_translation= hp.Float("translation", min_value=0.1, max_value=0.5, step=0.1)
+    hp_zoom= hp.Float("zoom", min_value=0.1, max_value=0.5, step=0.1)
+    augment = keras.Sequential(
+        [
+            keras.layers.RandomTranslation(
+                height_factor=(-hp_translation,hp_translation),
+                width_factor= (-hp_translation,hp_translation),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomZoom(
+                height_factor=(-hp_zoom,hp_zoom),
+                width_factor=(-hp_zoom,hp_zoom),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomFlip("horizontal", data_format="channels_last"),
+        ]
+    )
+    model.add(
+        augment
+    )
+
     # Convolutional layers
 
     # Convolutional layer 1
@@ -226,7 +215,7 @@ def build_model(hp: kt.HyperParameters,
         )
     )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
-    model.add(keras.layers.Dropout(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
 
     # Convolutional layer 2
     model.add(
@@ -238,7 +227,7 @@ def build_model(hp: kt.HyperParameters,
         )
     )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
-    model.add(keras.layers.Dropout(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
 
     # Convolutional layer 3
     model.add(
@@ -250,7 +239,7 @@ def build_model(hp: kt.HyperParameters,
         )
     )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
-    model.add(keras.layers.Dropout(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
 
     # Convolutional layer 4
     model.add(
@@ -262,7 +251,7 @@ def build_model(hp: kt.HyperParameters,
         )
     )
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
-    model.add(keras.layers.Dropout(hp.Float("dropout_4", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_4", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
 
     # Convolutional layer 5 (Final convolutional layer)
     model.add(
@@ -284,6 +273,9 @@ def build_model(hp: kt.HyperParameters,
         activation="relu"
     )) 
 
+    #why not
+    model.add(keras.layers.BatchNormalization())
+
     # Dense layer 2 (Second fully connected layer)
     model.add(keras.layers.Dense(
         hp.Int("dense_2", min_value=32, max_value=512, step=32),
@@ -301,7 +293,7 @@ def build_model(hp: kt.HyperParameters,
 
     # Compile the model
     model.compile(
-        optimizer=keras.optimizers.Adam(use_ema=True, learning_rate=hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
+        optimizer=keras.optimizers.AdamW(use_ema=True, learning_rate=hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
         loss=keras.losses.SparseCategoricalCrossentropy(),
         metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
     )
@@ -339,13 +331,10 @@ def train_and_test(
     @param save_weights Boolean on whether or not to save a the model after training
     @param weight_file name of the model to save, must be set if save_weights is true
     """
-
-    batch_size = 64
-
     models_dir = f"models/{model_file}/"
     checkpoint_path = models_dir + "{epoch:04d}.weights.h5"
 
-    train_ds, val_ds, test_ds = create_dataset(batch_size=batch_size)
+    train_ds, val_ds, test_ds = create_dataset(batch_size=BATCH_SIZE)
 
     if save_model and not model_file:
         raise ValueError("model_file must have a name if save_model is set TRUE")
@@ -375,7 +364,7 @@ def train_and_test(
 
     # Early stopping callback to stop training if the model is not improving after 5 epochs
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_accuracy", patience=5, restore_best_weights=True
+        monitor="val_loss", patience=5, restore_best_weights=True
     )
     callbacks.append(early_stopping)
 
@@ -436,6 +425,7 @@ def main():
     if DOWNLOAD_FILES:
         download_files()
     name = "base1"
+    print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
     train_and_test(
         graphs=True, save_model=True, model_file=f"{name}-e{EPOCHS}"
     )

@@ -1,4 +1,4 @@
-tmp
+tmp*
 __pycache__
 Pipfile.lock
 Pipfile.lock
