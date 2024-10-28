@@ -48,7 +48,7 @@ def download_files(url : str = DATASET_URL, dir : str = LOCAL_DIR) -> None:
         # If the file exists in the directory, skip the download
         if os.path.exists(f'{dir}/{file}'):
             print(f'{file} already exists in {dir}')
-            return False
+            continue
 
         # Download the file from the URL
         with request.urlopen(f'{url}/{file}', context=ssl._create_unverified_context()) as response:
