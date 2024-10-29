@@ -12,58 +12,19 @@ import ssl # import the ssl module to ignore SSL certificate errors
 import re # import the re module for regular expressions
 import matplotlib.pyplot as plt
 
+from time import sleep # import the sleep function from the time module because this goes too fast for me to read my print statements
+
 
 RAND_SEED = 0 # Random seed for reproducibility
 EPOCHS = 100 # Number of epochs to train for
 BATCH_SIZE = 128 # Batch size for training
 REPEAT_COUNT = 4 # How many times to repeat the training data (fluff out the data for faster training on GPU)
-DOWNLOAD_FILES = False # Whether or not to download the audio files if they don't exist in the local directory
-DATASET_URL = 'https://www.cs.nmt.edu/~leo/CREMA-D/AudioWAV' # Path to the dataset
-LOCAL_DIR = './tmp' # Local directory to store the dataset
+LOCAL_DIR = './tmp' # Local directory of the dataset. Should be split into subdirectories corresponding to the labels
 
-# Download the audio files from the dataset URL
-def download_files(url : str = DATASET_URL, dir : str = LOCAL_DIR) -> None:
-    # Load the file list from the dataset URL
-    filelist = []
-    # Ignore SSL certificate errors (Ty CS Dept)
-    with request.urlopen(url, context=ssl._create_unverified_context()) as response:
-        html = response.read().decode()
+SLEEP_TIME = 1 # Time to sleep between print statements
 
-    # Get the text located between the <a href="..."> NEEDED_VALUE </a> tag
-    # This is a simple way to extract the filenames from the HTML response
-    filename_regex = re.compile(r'<a href="([^"]+)">([^<]+)</a>')
+HYPERTUNING = False # Whether or not to use hyperparameter tuning
 
-    # Build a list of all the files in the dataset
-    for line in html.splitlines():
-        if '.wav' in line: # This line contains a .wav file, so extract the filename
-            match = filename_regex.search(line)
-            if match:
-                filelist.append(match.group(1)) # Append the filename to the list
-    
-    # Create the local directory if it doesn't exist
-    if not os.path.exists(dir):
-        os.makedirs(dir)
-    
-    # Download the files
-    total_files = len(filelist)
-    files_downloaded = len([f for f in os.listdir(dir) if f.endswith('.wav')])
-    for file in filelist:
-        # If the file exists in the directory, skip the download
-        if os.path.exists(f'{dir}/{file}'):
-            print(f'{file} already exists in {dir}')
-            continue
-
-        # Download the file from the URL
-        with request.urlopen(f'{url}/{file}', context=ssl._create_unverified_context()) as response:
-            with open(f'{dir}/{file}', 'wb') as file:
-                file.write(response.read())
-        files_downloaded += 1
-        print(f'Downloaded {file} ({files_downloaded}/{total_files} files).')
-        # Print a progress bar
-        print(
-                ('*' * int(50 * (files_downloaded / total_files)))
-            + ('-' * int(50 * (1 - files_downloaded / total_files)))
-            )
 
 # Returns a tensor of the spectrogram of the audio file
 def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
@@ -325,11 +286,17 @@ def train_and_test(
                 ) -> Tuple[dict, keras.Sequential]:
     """
     Train and test a model
-    @param datasets the training validation and testing datasets
+
+    if HYPERTUNING is True, the model will be hyperparameter tuned before training
+    otherwise the model will be loaded from models/{model_file} and trained
+
     @param epochs number of epochs to train for
     @param graphs whether or not to output graphs tracking loss and accuracy per epoch
-    @param save_weights Boolean on whether or not to save a the model after training
-    @param weight_file name of the model to save, must be set if save_weights is true
+    @param save_model whether or not to save the model after training is complete
+        - if HYPERTUNING is True, the best model will be saved as {model_file}-HYPERTUNED.keras regardless of this value
+    @param model_file the name of the model file to load and save to (this will append an int to the end of the file name to prevent overwriting)
+    @param ckpt_rate the rate at which to save checkpoints
+    @param tuning_epochs the number of epochs to train for during hyperparameter tuning
     """
     models_dir = f"models/{model_file}/"
     checkpoint_path = models_dir + "{epoch:04d}.weights.h5"
@@ -349,10 +316,10 @@ def train_and_test(
 
     callbacks = []
 
+    if not os.path.exists("models"):
+        os.makedirs("models")
     # Save the model after training
     if save_model:
-        if not os.path.exists("models"):
-            os.makedirs("models")
         if not os.path.exists(models_dir):
             os.makedirs(models_dir)
 
@@ -368,20 +335,54 @@ def train_and_test(
     )
     callbacks.append(early_stopping)
 
-    # Get the hyperparameter tuner
-    tuner = getHyperTuner(shape=shape, classes=6)
+    # Tune before loading the model
+    if HYPERTUNING:
+        print("Hypertuning is enabled. Training the model with the best hyperparameters.")
+        sleep(SLEEP_TIME)
 
-    # Search for the best hyperparameters
-    tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
-    
-    # Get the best hyperparameters
-    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+        # Get the hyperparameter tuner
+        tuner = getHyperTuner(shape=shape, classes=6)
 
-    # Build the model with the best hyperparameters
-    model = tuner.hypermodel.build(best_hps)
+        # Search for the best hyperparameters
+        tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
 
-    print(f"Best hyperparameters: {best_hps}")
+        # Get the best hyperparameters
+        best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+
+        # Build the model with the best hyperparameters
+        model = tuner.hypermodel.build(best_hps)
+
+        # Save the model
+        if model_file.endswith(".keras"):
+            model_file = model_file[:-6]
+        filename = f"{model_file}-HYPERTUNED"
+        i = 1
+        while os.path.exists(f"models/{filename}.keras"):
+            filename = f"{model_file}-HYPERTUNED-{i}"
+            i += 1
+        model.save(f"models/{filename}.keras")
+        print(f"Model saved as {filename}.keras")
+
+    # Load the model
+    else: 
+        # Build the model from models/{model_file}.keras
+        if not model_file.endswith(".keras"):
+            model_file += ".keras"
+        print(f"Hypertuning is disabled. Loading the model from {model_file}.")
+
+        model = keras.models.load_model(f"models/{model_file}")
+
+        # Train the model
+        model.compile(
+            optimizer=keras.optimizers.AdamW(use_ema=True, learning_rate=1e-3),
+            loss=keras.losses.SparseCategoricalCrossentropy(),
+            metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
+        )
+
+    print("Model has been loaded and compiled.")
+    # Print the model summary
     model.summary()
+    sleep(SLEEP_TIME)
 
     history = model.fit(
         train_ds,
@@ -413,7 +414,14 @@ def train_and_test(
 
     # Save the model
     if save_model:
-        model.save(f"models/{model_file}.keras")
+        if model_file.endswith(".keras"):
+            model_file = model_file[:-6]
+        filename = f"{model_file}"
+        i = 1
+        while os.path.exists(f"models/{filename}.keras"):
+            filename = f"{model_file}-{i}"
+            i += 1
+        model.save(f"models/{filename}.keras")
         np.save(os.path.join(models_dir, "history.npy"), history.history)
         # To load the history
         # history=np.load(os.path.join(models_dir,'history.npy'),allow_pickle='TRUE').item()
@@ -422,8 +430,6 @@ def train_and_test(
 
 
 def main():
-    if DOWNLOAD_FILES:
-        download_files()
     name = "base1"
     print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
     train_and_test(
