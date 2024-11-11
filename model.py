@@ -140,6 +140,10 @@ def build_model(hp: kt.HyperParameters,
 
     # Input layer
     model.add(keras.layers.Input(shape=input_shape))
+    # If its nots a choice keras doesn't seem to do the if statements soooo
+    # Sorry for the cursed shit
+    cnn_layers = hp.Int("cnn_layers", min_value=1,max_value=3)
+    dense_layers = hp.Int("dense_layers",  min_value=1,max_value=3)
 
     # Augment layer
     # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
@@ -178,92 +182,78 @@ def build_model(hp: kt.HyperParameters,
     model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
     model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
     model.add(keras.layers.BatchNormalization()) # Normalization technique 
-    #
-    # # Convolutional layer 2
-    # model.add(
-    #     keras.layers.Conv2D(
-    #         filters = hp.Int('conv_2_filters', min_value=16, max_value=128, step=16),
-    #         kernel_size = hp.Choice('conv_2_kernel', values=[3, 5]),
-    #         activation="relu",
-    #         padding="same"
-    #     )
-    # )
-    # model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
-    # model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
-    # model.add(keras.layers.BatchNormalization()) # Normalization technique 
-    #
+
     # Convolutional layer 2
+    with hp.conditional_scope('cnn_layers', [2,3]):
+        if cnn_layers >=2:
+            model.add(
+                keras.layers.Conv2D(
+                    filters = hp.Int('conv_2_filters', min_value=16, max_value=128, step=16),
+                    kernel_size = hp.Choice('conv_2_kernel', values=[3, 5]),
+                    activation="relu",
+                    padding="same"
+                )
+            )
+            model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
+            model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+            model.add(keras.layers.BatchNormalization()) # Normalization technique 
+
+        # Convolutional layer 3
+    with hp.conditional_scope('cnn_layers', [3]):
+        if cnn_layers >=3:
+            model.add(
+                keras.layers.Conv2D(
+                    filters=hp.Int('conv_3_filters', min_value=64, max_value=512, step=32),
+                    kernel_size=hp.Choice('conv_3_kernel', values=[3, 5]),
+                    activation="relu",
+                    padding="same"
+                )
+            )
+            model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
+            model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+            model.add(keras.layers.BatchNormalization()) # Normalization technique 
+
     model.add(
         keras.layers.ConvLSTM1D(
-            filters = hp.Int('lstm_filters', min_value=8, max_value=128, step=4),
+            filters = hp.Int('lstm_filters', min_value=8, max_value=128, step=8),
             kernel_size = hp.Choice('lstm_kernel', values=[3, 5]),
+            dropout= hp.Float("lstm_dropout", min_value=0.0, max_value=0.5, step=0.1),
+            recurrent_dropout=hp.Float("lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1),
             padding="same"
         )
     )
-
-    #
-    # # Convolutional layer 3
-    # model.add(
-    #     keras.layers.Conv2D(
-    #         filters=hp.Int('conv_3_filters', min_value=32, max_value=256, step=32),
-    #         kernel_size=hp.Choice('conv_3_kernel', values=[3, 5]),
-    #         activation="relu",
-    #         padding="same"
-    #     )
-    # )
-    # model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
-    # model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
-    #
-    # # Convolutional layer 4
-    # model.add(
-    #     keras.layers.Conv2D(
-    #         filters=hp.Int('conv_4_filters', min_value=64, max_value=512, step=32),
-    #         kernel_size=hp.Choice('conv_4_kernel', values=[3, 5]),
-    #         activation="relu",
-    #         padding="same"
-    #     )
-    # )
-    # model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
-    # model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_4", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
-    #
-    # # Convolutional layer 5 (Final convolutional layer)
-    # model.add(
-    #     keras.layers.Conv2D(
-    #         filters=hp.Int('conv_5_filters', min_value=64, max_value=1024, step=32),
-    #         kernel_size=hp.Choice('conv_5_kernel', values=range(3, 7)),
-    #         activation="relu",
-    #         padding="same"
-    #     )
-    # )
-    #
+    model.add(keras.layers.BatchNormalization()) # Normalization technique 
+    
     # Flatten the output of the convolutional layers
     model.add(keras.layers.Flatten())
 
     # Dense layers
-    # Dense layer 1 (First fully connected layer)
-    # model.add(keras.layers.Dense(
-    #     hp.Int("dense_1", min_value=64, max_value=1024, step=64), # Hyperparameter tuned number of neurons
-    #     activation="relu"
-    # )) 
-    #
-    #why not
-    model.add(keras.layers.BatchNormalization())
+    # Dense layer 3 (First fully connected layer)
+    with hp.conditional_scope('dense_layers', [3]):
+        if dense_layers >=3:
+            model.add(keras.layers.Dense(
+                hp.Int("dense_3", min_value=64, max_value=1024, step=64), # Hyperparameter tuned number of neurons
+                activation="relu"
+            )) 
+            model.add(keras.layers.BatchNormalization())
 
     # Dense layer 2 (Second fully connected layer)
-    model.add(keras.layers.Dense(
-        hp.Int("dense_2", min_value=32, max_value=512, step=32),
-        activation="relu"
-    ))
-
+    with hp.conditional_scope('dense_layers', [2,3]):
+        if dense_layers >=2:
+            model.add(keras.layers.Dense(
+                hp.Int("dense_2", min_value=32, max_value=512, step=32),
+                activation="relu"
+            ))
+            model.add(keras.layers.BatchNormalization())
     model.add(keras.layers.BatchNormalization())
 
-    # Dense layer 3 (Third fully connected layer)
+    # Dense layer 1 (Third fully connected layer)
     model.add(keras.layers.Dense(
-        hp.Int("dense_3", min_value=16, max_value=256, step=16),
+        hp.Int("dense_1", min_value=16, max_value=256, step=16),
         activation="relu"
     ))
-
     model.add(keras.layers.BatchNormalization())
+    
     # Output layer
     model.add(keras.layers.Dense(num_classes, activation="softmax"))
 
