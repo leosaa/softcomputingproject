@@ -468,7 +468,7 @@ def train_and_test(
 
 
 def main():
-    name = "base1"
+    name = "lstm"
     print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
     _, model = train_and_test(
         graphs=True, save_model=True, model_file=f"{name}-e{EPOCHS}"
