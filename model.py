@@ -16,9 +16,9 @@ from time import sleep # import the sleep function from the time module because 
 
 
 RAND_SEED = 0 # Random seed for reproducibility
-EPOCHS = 100 # Number of epochs to train for
+EPOCHS = 50 # Number of epochs to train for
 BATCH_SIZE = 128 # Batch size for training
-REPEAT_COUNT = 4 # How many times to repeat the training data (fluff out the data for faster training on GPU)
+REPEAT_COUNT = 2 # How many times to repeat the training data (fluff out the data for faster training on GPU)
 LOCAL_DIR = './tmp' # Local directory of the dataset. Should be split into subdirectories corresponding to the labels
 
 SLEEP_TIME = 1 # Time to sleep between print statements
@@ -30,11 +30,11 @@ HYPERTUNING = True # Whether or not to use hyperparameter tuning
 def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
-        waveform, nfft=window_size, window=window_size, stride=window_size
+        waveform, nfft=window_size, window=window_size, stride=math.floor(window_size/2)
     )
 
     mel_spectrogram = tfio.audio.melscale(
-        spectrogram, rate=16000, mels=64, fmin=0, fmax=8000
+        spectrogram, rate=16000, mels=128, fmin=0, fmax=8000
     )
     # Convert to db scale mel-spectrogram
     dbscale_mel_spectrogram = tfio.audio.dbscale(mel_spectrogram, top_db=80)
@@ -142,8 +142,11 @@ def build_model(hp: kt.HyperParameters,
     model.add(keras.layers.Input(shape=input_shape))
     # If its nots a choice keras doesn't seem to do the if statements soooo
     # Sorry for the cursed shit
-    cnn_layers = hp.Int("cnn_layers", min_value=1,max_value=3)
+    cnn_layers = hp.Int("cnn_layers", min_value=1,max_value=2)
     dense_layers = hp.Int("dense_layers",  min_value=1,max_value=3)
+
+    # Choose to use a bidirectional RNN layer or not
+    bidirectional = hp.Boolean("bidirectional", default=True)
 
     # Augment layer
     # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
@@ -169,19 +172,22 @@ def build_model(hp: kt.HyperParameters,
     )
 
     # Convolutional layers
+    conv_dropout = hp.Float("conv_dropout", min_value=0.1, max_value=0.5, step=0.1)
 
-    # Convolutional layer 1
-    model.add(
-        keras.layers.Conv2D(
-            filters=hp.Int("conv_1_filters", min_value=8, max_value=64, step=8), # Hyperparameter tuned number of filters
-            kernel_size=hp.Choice('conv_1_kernel', values=[3, 5]), # Hyperparameter tuned kernel size between 3 and 5
-            activation="relu",
-            padding="same"
-        )
-    )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
-    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
-    model.add(keras.layers.BatchNormalization()) # Normalization technique 
+    with hp.conditional_scope('cnn_layers', [1,2,3]):
+        if cnn_layers >=1:
+            # Convolutional layer 1
+            model.add(
+                keras.layers.Conv2D(
+                    filters=hp.Int("conv_1_filters", min_value=16, max_value=128, step=16), # Hyperparameter tuned number of filters
+                    kernel_size=hp.Choice('conv_1_kernel', values=[3, 5]), # Hyperparameter tuned kernel size between 3 and 5
+                    activation="relu",
+                    padding="same"
+                )
+            )
+            model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
+            model.add(keras.layers.SpatialDropout2D(conv_dropout, data_format="channels_last")) # Dropout layer to prevent overfitting (hyperparameter tuned)
+            model.add(keras.layers.BatchNormalization()) # Normalization technique 
 
     # Convolutional layer 2
     with hp.conditional_scope('cnn_layers', [2,3]):
@@ -195,34 +201,62 @@ def build_model(hp: kt.HyperParameters,
                 )
             )
             model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
-            model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+            model.add(keras.layers.SpatialDropout2D(conv_dropout, data_format="channels_last")) # Dropout layer
             model.add(keras.layers.BatchNormalization()) # Normalization technique 
 
-        # Convolutional layer 3
-    with hp.conditional_scope('cnn_layers', [3]):
+    # Convolutional layer 3
+    with hp.conditional_scope('cnn_layers', [2,3]):
         if cnn_layers >=3:
             model.add(
                 keras.layers.Conv2D(
-                    filters=hp.Int('conv_3_filters', min_value=64, max_value=512, step=32),
-                    kernel_size=hp.Choice('conv_3_kernel', values=[3, 5]),
+                    filters = hp.Int('conv_3_filters', min_value=16, max_value=128, step=16),
+                    kernel_size = hp.Choice('conv_3_kernel', values=[3, 5]),
                     activation="relu",
                     padding="same"
                 )
             )
-            model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
-            model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+            model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
+            model.add(keras.layers.SpatialDropout2D(conv_dropout, data_format="channels_last")) # Dropout layer
             model.add(keras.layers.BatchNormalization()) # Normalization technique 
 
-    model.add(
-        keras.layers.ConvLSTM1D(
-            filters = hp.Int('lstm_filters', min_value=8, max_value=128, step=8),
-            kernel_size = hp.Choice('lstm_kernel', values=[3, 5]),
-            dropout= hp.Float("lstm_dropout", min_value=0.0, max_value=0.5, step=0.1),
-            recurrent_dropout=hp.Float("lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1),
-            padding="same"
-        )
-    )
-    model.add(keras.layers.BatchNormalization()) # Normalization technique 
+    
+
+    with hp.conditional_scope('bidirectional', [True]):
+        lstm_filters = hp.Int('bi_lstm_filters', min_value=16, max_value=128, step=16)
+        lstm_kernel = hp.Choice('bi_lstm_kernel', values=[3, 5, 7, 9, 11])
+        lstm_dropout = hp.Float("bi_lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
+        lstm_rec_dropout = hp.Float("bi_lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
+        if bidirectional:
+            model.add(keras.layers.Bidirectional(
+                keras.layers.ConvLSTM1D(
+                    filters = lstm_filters,
+                    kernel_size = lstm_kernel,
+                    dropout= lstm_dropout,
+                    recurrent_dropout=lstm_rec_dropout,
+                    padding="same",
+                    data_format="channels_last",
+                ))
+            )
+            model.add(keras.layers.BatchNormalization()) # Normalization technique 
+    
+    with hp.conditional_scope('bidirectional', [False]):
+        lstm_filters = hp.Int('lstm_filters', min_value=16, max_value=128, step=16)
+        lstm_kernel = hp.Choice('lstm_kernel', values=[3, 5, 7, 9, 11])
+        lstm_dropout = hp.Float("lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
+        lstm_rec_dropout = hp.Float("lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
+        if not bidirectional:
+            model.add(
+                keras.layers.ConvLSTM1D(
+                    filters = lstm_filters,
+                    kernel_size = lstm_kernel,
+                    dropout= lstm_dropout,
+                    recurrent_dropout=lstm_rec_dropout,
+                    padding="same",
+                    data_format="channels_last",
+                )
+            )
+            model.add(keras.layers.BatchNormalization()) # Normalization technique 
+        
     
     # Flatten the output of the convolutional layers
     model.add(keras.layers.Flatten())
@@ -232,7 +266,7 @@ def build_model(hp: kt.HyperParameters,
     with hp.conditional_scope('dense_layers', [3]):
         if dense_layers >=3:
             model.add(keras.layers.Dense(
-                hp.Int("dense_3", min_value=64, max_value=1024, step=64), # Hyperparameter tuned number of neurons
+                hp.Int("dense_3", min_value=64, max_value=2048, step=64), # Hyperparameter tuned number of neurons
                 activation="relu"
             )) 
             model.add(keras.layers.BatchNormalization())
@@ -241,15 +275,14 @@ def build_model(hp: kt.HyperParameters,
     with hp.conditional_scope('dense_layers', [2,3]):
         if dense_layers >=2:
             model.add(keras.layers.Dense(
-                hp.Int("dense_2", min_value=32, max_value=512, step=32),
+                hp.Int("dense_2", min_value=32, max_value=1024, step=32),
                 activation="relu"
             ))
             model.add(keras.layers.BatchNormalization())
-    model.add(keras.layers.BatchNormalization())
 
     # Dense layer 1 (Third fully connected layer)
     model.add(keras.layers.Dense(
-        hp.Int("dense_1", min_value=16, max_value=256, step=16),
+        hp.Int("dense_1", min_value=32, max_value=1024, step=32),
         activation="relu"
     ))
     model.add(keras.layers.BatchNormalization())
@@ -312,7 +345,7 @@ def train_and_test(
         raise ValueError("model_file must have a name if save_model is set TRUE")
     
     # saves every 10 epochs
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(
+    cp_callback = keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_path,
         verbose=1,
         save_weights_only=True,
@@ -437,7 +470,7 @@ def train_and_test(
 def main():
     name = "base1"
     print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-    train_and_test(
+    _, model = train_and_test(
         graphs=True, save_model=True, model_file=f"{name}-e{EPOCHS}"
     )
 
