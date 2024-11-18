@@ -3,15 +3,28 @@ import tensorflow as tf
 from tensorflow._api.v2.data import Dataset
 import tensorflow_io as tfio
 import math
-
+import keras_tuner as kt
 import os
 import numpy as np
 import keras
-
+import urllib.request as request
+import ssl # import the ssl module to ignore SSL certificate errors
+import re # import the re module for regular expressions
 import matplotlib.pyplot as plt
 
-RAND_SEED = 0
-EPOCHS = 50
+from time import sleep # import the sleep function from the time module because this goes too fast for me to read my print statements
+
+
+RAND_SEED = 0 # Random seed for reproducibility
+EPOCHS = 100 # Number of epochs to train for
+BATCH_SIZE = 128 # Batch size for training
+REPEAT_COUNT = 4 # How many times to repeat the training data (fluff out the data for faster training on GPU)
+LOCAL_DIR = './tmp' # Local directory of the dataset. Should be split into subdirectories corresponding to the labels
+
+SLEEP_TIME = 1 # Time to sleep between print statements
+
+HYPERTUNING = False # Whether or not to use hyperparameter tuning
+
 
 # Returns a tensor of the spectrogram of the audio file
 def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
@@ -77,44 +90,10 @@ def create_dataset(batch_size: int = 64,
                    window_size: int = 512,
                    shuffle_size=8) -> Tuple[Dataset, Dataset, Dataset]:
     
-    # Get the labels from the filenames
-    labels: list[int] = []
-    # Extract features for each audio file in the dataset
-    for _, _, filenames in os.walk("tmp"):
-        for filename in filenames:
-            if not filename.endswith(
-                ".wav"
-            ):  # Skip non-wav files (this shouldn't happen)
-                print(
-                    f"Skipping {filename} as it is not a .wav file (how did this happen?)"
-                )
-                continue
-
-            # Get the label from the filename
-            # Assuming the label is the third part of the filename
-            labels.append(label_to_int(filename.split("_")[2]))
-
-    # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
-    augment = keras.Sequential(
-        [
-            keras.layers.RandomTranslation(
-                height_factor=(-0.2, 0.2),
-                width_factor=(-0.2, 0.2),
-                data_format="channels_last",
-            ),
-            keras.layers.RandomZoom(
-                height_factor=(-0.2, 0.2),
-                width_factor=(-0.2, 0.2),
-                data_format="channels_last",
-            ),
-            keras.layers.RandomFlip("horizontal", data_format="channels_last"),
-        ]
-    )
-
     # A lot is going on here, try and set window size to roughly sample_rate*time/64
     train_ds, val_ds = keras.utils.audio_dataset_from_directory(
         directory="tmp",
-        labels=labels,
+        labels="inferred",
         label_mode="int",
         batch_size=None,
         shuffle=True,
@@ -140,76 +119,142 @@ def create_dataset(batch_size: int = 64,
     val_ds = val_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
     test_ds = test_ds.shuffle(shuffle_size * batch_size).batch(batch_size=batch_size)
 
-    # Augment the dataset with more images for more training data
-    train_ds = train_ds.map(
-        lambda x, y: (augment(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE
-    )
+
 
     print(train_ds.element_spec)
 
     return (
-        train_ds.prefetch(tf.data.AUTOTUNE),
+        train_ds.repeat(REPEAT_COUNT).prefetch(tf.data.AUTOTUNE),
         val_ds.prefetch(tf.data.AUTOTUNE),
         test_ds.prefetch(tf.data.AUTOTUNE),
     )
 
 # Build the model
-def build_model(input_shape: Tuple[int, int, int],
-                num_classes: int) -> keras.Sequential:
+def build_model(hp: kt.HyperParameters,
+                input_shape: Tuple[int, int, int],
+                num_classes: int
+                ) -> keras.Sequential:
     model: keras.Sequential = keras.Sequential()
 
     # This is model is based on the arxiv paper posted in the models-datasets nots file
+
+    # Input layer
     model.add(keras.layers.Input(shape=input_shape))
-    model.add(
-        keras.layers.Conv2D(filters=8, kernel_size=5, activation="relu", padding="same")
-    )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) #(32,32,8)
-    model.add(keras.layers.Dropout(0.2))
 
-    model.add(
-        keras.layers.Conv2D(
-            filters=16, kernel_size=5, activation="relu", padding="same"
-        )
+    # Augment layer
+    # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
+    hp_translation= hp.Float("translation", min_value=0.1, max_value=0.5, step=0.1)
+    hp_zoom= hp.Float("zoom", min_value=0.1, max_value=0.5, step=0.1)
+    augment = keras.Sequential(
+        [
+            keras.layers.RandomTranslation(
+                height_factor=(-hp_translation,hp_translation),
+                width_factor= (-hp_translation,hp_translation),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomZoom(
+                height_factor=(-hp_zoom,hp_zoom),
+                width_factor=(-hp_zoom,hp_zoom),
+                data_format="channels_last",
+            ),
+            keras.layers.RandomFlip("horizontal", data_format="channels_last"),
+        ]
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
-
     model.add(
-        keras.layers.Conv2D(
-            filters=100, kernel_size=5, activation="relu", padding="same"
-        )
+        augment
     )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
 
-    model.add(
-        keras.layers.Conv2D(
-            filters=200, kernel_size=5, activation="relu", padding="same"
-        )
-    )
-    model.add(keras.layers.MaxPool2D(pool_size=(2, 2)))
-    model.add(keras.layers.Dropout(0.2))
-    #(4,4,200)
+    # Convolutional layers
 
+    # Convolutional layer 1
     model.add(
         keras.layers.Conv2D(
-            filters=200, kernel_size=4, activation="relu", padding="same"
+            filters=hp.Int("conv_1_filters", min_value=8, max_value=64, step=8), # Hyperparameter tuned number of filters
+            kernel_size=hp.Choice('conv_1_kernel', values=[3, 5]), # Hyperparameter tuned kernel size between 3 and 5
+            activation="relu",
+            padding="same"
+        )
+    )
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image (Shrinks the image by 2)
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_1", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer to prevent overfitting (hyperparameter tuned)
+
+    # Convolutional layer 2
+    model.add(
+        keras.layers.Conv2D(
+            filters = hp.Int('conv_2_filters', min_value=16, max_value=128, step=16),
+            kernel_size = hp.Choice('conv_2_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
+        )
+    )
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer to reduce the size of the image
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_2", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+
+    # Convolutional layer 3
+    model.add(
+        keras.layers.Conv2D(
+            filters=hp.Int('conv_3_filters', min_value=32, max_value=256, step=32),
+            kernel_size=hp.Choice('conv_3_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
+        )
+    )
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_3", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+
+    # Convolutional layer 4
+    model.add(
+        keras.layers.Conv2D(
+            filters=hp.Int('conv_4_filters', min_value=64, max_value=512, step=32),
+            kernel_size=hp.Choice('conv_4_kernel', values=[3, 5]),
+            activation="relu",
+            padding="same"
+        )
+    )
+    model.add(keras.layers.MaxPool2D(pool_size=(2, 2))) # Max pooling layer
+    model.add(keras.layers.SpatialDropout2D(hp.Float("dropout_4", min_value=0.1, max_value=0.5, step=0.1))) # Dropout layer
+
+    # Convolutional layer 5 (Final convolutional layer)
+    model.add(
+        keras.layers.Conv2D(
+            filters=hp.Int('conv_5_filters', min_value=64, max_value=1024, step=32),
+            kernel_size=hp.Choice('conv_5_kernel', values=range(3, 7)),
+            activation="relu",
+            padding="same"
         )
     )
 
+    # Flatten the output of the convolutional layers
     model.add(keras.layers.Flatten())
 
-    model.add(keras.layers.Dense(4 * 4 * 200))
+    # Dense layers
+    # Dense layer 1 (First fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_1", min_value=64, max_value=1024, step=64), # Hyperparameter tuned number of neurons
+        activation="relu"
+    )) 
 
-    model.add(keras.layers.Dense(4 * 200))
+    #why not
+    model.add(keras.layers.BatchNormalization())
 
-    model.add(keras.layers.Dense(200))
+    # Dense layer 2 (Second fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_2", min_value=32, max_value=512, step=32),
+        activation="relu"
+    ))
 
+    # Dense layer 3 (Third fully connected layer)
+    model.add(keras.layers.Dense(
+        hp.Int("dense_3", min_value=16, max_value=256, step=16),
+        activation="relu"
+    ))
+
+    # Output layer
     model.add(keras.layers.Dense(num_classes, activation="softmax"))
 
     # Compile the model
     model.compile(
-        optimizer=keras.optimizers.Adam(use_ema=True),
+        optimizer=keras.optimizers.AdamW(use_ema=True, learning_rate=hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
         loss=keras.losses.SparseCategoricalCrossentropy(),
         metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
     )
@@ -217,31 +262,50 @@ def build_model(input_shape: Tuple[int, int, int],
     return model
 
 
+# Get the hyperparameter tuner
+def getHyperTuner(shape, classes) -> kt.Hyperband:
+    tuner = kt.Hyperband(
+        lambda hp: build_model(hp, input_shape=shape, num_classes=classes), # Function to build the model
+        objective="val_accuracy", # Objective to optimize
+        max_epochs=50, # Maximum number of epochs to train for
+        factor=3, # Reduction factor for the number of epochs and number of models
+        hyperband_iterations=2, # Number of times to iterate over the hyperband algorithm
+        directory="models", # Directory to save the models
+        project_name="hyperband", # Name of the project
+    )
+
+    return tuner
+
 def train_and_test(
-                   epochs: int = 100,
+                   epochs: int = EPOCHS,
                    graphs: bool = False, 
                    save_model: bool = False, 
                    model_file: str = None,
                    ckpt_rate: int = 10,
+                   tuning_epochs: int = 10
                 ) -> Tuple[dict, keras.Sequential]:
     """
     Train and test a model
-    @param datasets the training validation and testing datasets
+
+    if HYPERTUNING is True, the model will be hyperparameter tuned before training
+    otherwise the model will be loaded from models/{model_file} and trained
+
     @param epochs number of epochs to train for
     @param graphs whether or not to output graphs tracking loss and accuracy per epoch
-    @param save_weights Boolean on whether or not to save a the model after training
-    @param weight_file name of the model to save, must be set if save_weights is true
+    @param save_model whether or not to save the model after training is complete
+        - if HYPERTUNING is True, the best model will be saved as {model_file}-HYPERTUNED.keras regardless of this value
+    @param model_file the name of the model file to load and save to (this will append an int to the end of the file name to prevent overwriting)
+    @param ckpt_rate the rate at which to save checkpoints
+    @param tuning_epochs the number of epochs to train for during hyperparameter tuning
     """
-
-    batch_size = 64
-
     models_dir = f"models/{model_file}/"
     checkpoint_path = models_dir + "{epoch:04d}.weights.h5"
 
-    train_ds, val_ds, test_ds = create_dataset(batch_size=batch_size)
+    train_ds, val_ds, test_ds = create_dataset(batch_size=BATCH_SIZE)
 
     if save_model and not model_file:
         raise ValueError("model_file must have a name if save_model is set TRUE")
+    
     # saves every 10 epochs
     cp_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_path,
@@ -252,10 +316,10 @@ def train_and_test(
 
     callbacks = []
 
+    if not os.path.exists("models"):
+        os.makedirs("models")
     # Save the model after training
     if save_model:
-        if not os.path.exists("models"):
-            os.makedirs("models")
         if not os.path.exists(models_dir):
             os.makedirs(models_dir)
 
@@ -265,12 +329,66 @@ def train_and_test(
         shape: Tuple = example_audio[0].shape
         print(shape)
 
-    model = build_model(input_shape=shape, num_classes=6)
+    # Early stopping callback to stop training if the model is not improving after 5 epochs
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss", patience=5, restore_best_weights=True
+    )
+    callbacks.append(early_stopping)
 
+    # Tune before loading the model
+    if HYPERTUNING:
+        print("Hypertuning is enabled. Training the model with the best hyperparameters.")
+        sleep(SLEEP_TIME)
+
+        # Get the hyperparameter tuner
+        tuner = getHyperTuner(shape=shape, classes=6)
+
+        # Search for the best hyperparameters
+        tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
+
+        # Get the best hyperparameters
+        best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+
+        # Build the model with the best hyperparameters
+        model = tuner.hypermodel.build(best_hps)
+
+        # Save the model
+        if model_file.endswith(".keras"):
+            model_file = model_file[:-6]
+        filename = f"{model_file}-HYPERTUNED"
+        i = 1
+        while os.path.exists(f"models/{filename}.keras"):
+            filename = f"{model_file}-HYPERTUNED-{i}"
+            i += 1
+        model.save(f"models/{filename}.keras")
+        print(f"Model saved as {filename}.keras")
+
+    # Load the model
+    else: 
+        # Build the model from models/{model_file}.keras
+        if not model_file.endswith(".keras"):
+            model_file += ".keras"
+        print(f"Hypertuning is disabled. Loading the model from {model_file}.")
+
+        model = keras.models.load_model(f"models/{model_file}")
+
+        # Train the model
+        model.compile(
+            optimizer=keras.optimizers.AdamW(use_ema=True, learning_rate=1e-3),
+            loss=keras.losses.SparseCategoricalCrossentropy(),
+            metrics=[keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
+        )
+
+    print("Model has been loaded and compiled.")
+    # Print the model summary
     model.summary()
+    sleep(SLEEP_TIME)
 
     history = model.fit(
-        train_ds, validation_data=val_ds, epochs=epochs, callbacks=callbacks
+        train_ds,
+        validation_data=val_ds,
+        epochs=epochs,
+        callbacks=callbacks
     )
 
     # summarize history for accuracy
@@ -296,7 +414,14 @@ def train_and_test(
 
     # Save the model
     if save_model:
-        model.save(f"models/{model_file}.keras")
+        if model_file.endswith(".keras"):
+            model_file = model_file[:-6]
+        filename = f"{model_file}"
+        i = 1
+        while os.path.exists(f"models/{filename}.keras"):
+            filename = f"{model_file}-{i}"
+            i += 1
+        model.save(f"models/{filename}.keras")
         np.save(os.path.join(models_dir, "history.npy"), history.history)
         # To load the history
         # history=np.load(os.path.join(models_dir,'history.npy'),allow_pickle='TRUE').item()
@@ -305,10 +430,10 @@ def train_and_test(
 
 
 def main():
-    epochs = EPOCHS
     name = "base1"
+    print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
     train_and_test(
-        epochs=epochs, graphs=True, save_model=True, model_file=f"{name}-e{epochs}"
+        graphs=True, save_model=True, model_file=f"{name}-e{EPOCHS}"
     )
 
 

@@ -4,14 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-librosa = "*"
-tensorflow = "*"
-keras-tuner = "*"
-tensorflow-datasets = "*"
+tensorflow = {extras = ["and-cuda"], version = "*"}
 tensorflow-io = "*"
+keras-tuner = "*"
 matplotlib = "*"
-pyaudio = "*"
 
 [dev-packages]
 
 [requires]
+python_version = "3.12"
