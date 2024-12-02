@@ -10,13 +10,19 @@ import math
 audio_dir = 'test-audio'
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 64 * 512
+CHUNK_RATE=(SAMPLE_RATE/CHUNK_SIZE) #There are this many chunks per second
+CHUNK_RATE_MULTIPLIER=32 # the number of chunks to have every second
+CHUNK_PER_SECOND=CHUNK_RATE_MULTIPLIER/CHUNK_RATE # This is how many chunks we need to sample
+WINDOW_WIDTH_SECONDS=1/4 # How many seconds the moving average moves over
+WINDOW_WIDTH = math.floor(CHUNK_RATE_MULTIPLIER*WINDOW_WIDTH_SECONDS) # Length of the window in predicted chunks
 CHANNELS = 1
-MODEL_NAME = 'base1-e50.keras'
+MODEL_NAME = 'base1-e200.keras'
 
 def predict(audio: np.ndarray, model: keras.Sequential) -> str:
 
     # Preprocess the dataset into mel spectrograms
     spect = m.get_spectrogram(audio, 512)
+
     spect = np.expand_dims(spect, axis=0)
     
     # Predict the class of the audio
@@ -31,23 +37,24 @@ def predict(audio: np.ndarray, model: keras.Sequential) -> str:
 def process_audio_file(file_path: str, model: keras.Sequential, chunk_size: int = CHUNK_SIZE, sample_rate: int = SAMPLE_RATE):
     """Processes a single .wav file and classifies it over time."""
     # Load audio file
-    audio, sr = lr.load(file_path, sr=sample_rate)
+    audio, _ = lr.load(file_path, sr=sample_rate) # resamples the audio to the given sample rate
 
     classifications = []
     timestamps = []
 
-    chunk_split_ratio=64
 
-    num_chunks = len(audio) // chunk_size
-    for i in range(num_chunks*chunk_split_ratio):
-        start = math.floor(i * chunk_size/chunk_split_ratio)
+    # print(CHUNK_RATE)
+    # print(CHUNK_PER_SECOND)
+    num_seconds = len(audio) // sample_rate
+    for i in range(math.floor(num_seconds*CHUNK_PER_SECOND)):
+        start = math.floor(i*chunk_size / CHUNK_PER_SECOND)
         end = start + chunk_size
 
         chunk = audio[start:end]
         if len(chunk) == chunk_size: # Ensure the chunk is the correct size before processing
-            # print(f'Processing chunk {i}...')
+            print(f'Progress {i/(num_seconds*CHUNK_PER_SECOND)*100:2.2f}%', end ='\r')
             classifications.append(predict(chunk, model))
-            timestamps.append(i * (chunk_size / sample_rate)/chunk_split_ratio)  # Time in seconds
+            timestamps.append(i * (chunk_size / sample_rate)/CHUNK_PER_SECOND)  # Time in seconds
 
     return classifications, timestamps
 
@@ -71,14 +78,23 @@ def plot_classifications(labels, confidence, timestamps, name):
     if any(len(c) != len(labels) for c in confidence):
         raise ValueError("Each confidence entry must have the same length as the labels list.")
 
+
     # Convert confidence to a numpy array for easier slicing
     confidence = np.array(confidence)
+
+    ma_confidence = np.zeros_like(confidence, dtype=float)
+    
+    # Pad the array with zeros
+    padded_confidence = np.pad(confidence, ((WINDOW_WIDTH - 1, 0), (0, 0)), mode='constant', constant_values=0)
+
+    for i in range(confidence.shape[0]):
+        ma_confidence[i] = np.mean(padded_confidence[i:i + WINDOW_WIDTH], axis=0)
 
     # Create the plot
     plt.figure(figsize=(10, 6))
 
     for i, label in enumerate(labels):
-        plt.plot(timestamps, confidence[:, i], label=label, marker=' ', linestyle='-', alpha=0.7)
+        plt.plot(timestamps, ma_confidence[:, i], label=label, marker=' ', linestyle='-', alpha=0.7)
 
     # Add title, labels, and legend
     plt.title(f"Classification Confidence Over Time for '{name}'", fontsize=16)
