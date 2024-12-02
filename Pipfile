@@ -8,6 +8,7 @@ tensorflow = {extras = ["and-cuda"], version = "*"}
 tensorflow-io = "*"
 keras-tuner = "*"
 matplotlib = "*"
+librosa = "*"
 
 [dev-packages]
 
