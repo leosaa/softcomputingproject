@@ -58,7 +58,7 @@ def process_audio_file(file_path: str, model: keras.Sequential, chunk_size: int 
 
     return classifications, timestamps
 
-def plot_classifications(labels, confidence, timestamps, name):
+def plot_classifications(labels, confidence, timestamps, name, colors):
     """
     Plots the classification confidence levels over time for multiple labels.
 
@@ -94,7 +94,7 @@ def plot_classifications(labels, confidence, timestamps, name):
     plt.figure(figsize=(10, 6))
 
     for i, label in enumerate(labels):
-        plt.plot(timestamps, ma_confidence[:, i], label=label, marker=' ', linestyle='-', alpha=0.7)
+        plt.plot(timestamps, ma_confidence[:, i], label=label, marker=' ', linestyle='-', alpha=0.7, c = colors[i])
 
     # Add title, labels, and legend
     plt.title(f"Classification Confidence Over Time for '{name}'", fontsize=16)
@@ -121,6 +121,15 @@ def main():
         'Sadness'
     ]
 
+    colors = [
+        'r', # Red for Anger
+        'g', # Green for Disgust
+        'p', # Purple for Fear
+        'y', # Yellow for Happiness
+        'k', # Black for Neutral
+        'c', # Cyan for Sadness
+    ]
+
     # Grab an audio file from the local audio clips directory
     for file in os.listdir(audio_dir):
         if file.endswith('.wav'):
@@ -128,7 +137,7 @@ def main():
             file_path = os.path.join(audio_dir, file)
 
             classifications, timestamps = process_audio_file(file_path, model, CHUNK_SIZE, SAMPLE_RATE)
-            plot_classifications(labels, classifications, timestamps, file)
+            plot_classifications(labels, classifications, timestamps, file, colors)
 
 
 if __name__ == '__main__':
