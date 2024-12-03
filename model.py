@@ -30,11 +30,11 @@ HYPERTUNING = True # Whether or not to use hyperparameter tuning
 def get_spectrogram(waveform, window_size: int) -> tf.Tensor:
     # Convert the waveform to a spectrogram via a STFT
     spectrogram = tfio.audio.spectrogram(
-        waveform, nfft=window_size, window=window_size, stride=math.floor(window_size/2)
+        waveform, nfft=window_size, window=window_size, stride=window_size
     )
 
     mel_spectrogram = tfio.audio.melscale(
-        spectrogram, rate=16000, mels=128, fmin=0, fmax=8000
+        spectrogram, rate=16000, mels=64, fmin=0, fmax=8000
     )
     # Convert to db scale mel-spectrogram
     dbscale_mel_spectrogram = tfio.audio.dbscale(mel_spectrogram, top_db=80)
@@ -146,7 +146,8 @@ def build_model(hp: kt.HyperParameters,
     dense_layers = hp.Int("dense_layers",  min_value=1,max_value=3)
 
     # Choose to use a bidirectional RNN layer or not
-    bidirectional = hp.Boolean("bidirectional", default=True)
+    # bidirectional = hp.Boolean("bidirectional", default=True)
+    bidirectional = False
 
     # Augment layer
     # Augment the dataset with more images for more training data by translating, zooming, and flipping the images
@@ -221,43 +222,43 @@ def build_model(hp: kt.HyperParameters,
 
     
 
-    with hp.conditional_scope('bidirectional', [True]):
-        lstm_filters = hp.Int('bi_lstm_filters', min_value=16, max_value=128, step=16)
-        lstm_kernel = hp.Choice('bi_lstm_kernel', values=[3, 5, 7, 9, 11])
-        lstm_dropout = hp.Float("bi_lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
-        lstm_rec_dropout = hp.Float("bi_lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
-        if bidirectional:
-            model.add(keras.layers.Bidirectional(
-                keras.layers.ConvLSTM1D(
-                    filters = lstm_filters,
-                    kernel_size = lstm_kernel,
-                    dropout= lstm_dropout,
-                    recurrent_dropout=lstm_rec_dropout,
-                    padding="same",
-                    data_format="channels_last",
-                ))
-            )
-            model.add(keras.layers.BatchNormalization()) # Normalization technique 
+    # with hp.conditional_scope('bidirectional', [True]):
+    #     lstm_filters = hp.Int('bi_lstm_filters', min_value=16, max_value=64, step=8)
+    #     lstm_kernel = hp.Choice('bi_lstm_kernel', values=[3, 5, 7, 9, 11])
+    #     lstm_dropout = hp.Float("bi_lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
+    #     lstm_rec_dropout = hp.Float("bi_lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
+    #     if bidirectional:
+    #         model.add(keras.layers.Bidirectional(
+    #             keras.layers.ConvLSTM1D(
+    #                 filters = lstm_filters,
+    #                 kernel_size = lstm_kernel,
+    #                 dropout= lstm_dropout,
+    #                 recurrent_dropout=lstm_rec_dropout,
+    #                 padding="same",
+    #                 data_format="channels_last",
+    #             ))
+    #         )
+    #         model.add(keras.layers.BatchNormalization()) # Normalization technique 
     
-    with hp.conditional_scope('bidirectional', [False]):
-        lstm_filters = hp.Int('lstm_filters', min_value=16, max_value=128, step=16)
-        lstm_kernel = hp.Choice('lstm_kernel', values=[3, 5, 7, 9, 11])
-        lstm_dropout = hp.Float("lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
-        lstm_rec_dropout = hp.Float("lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
-        if not bidirectional:
-            model.add(
-                keras.layers.ConvLSTM1D(
-                    filters = lstm_filters,
-                    kernel_size = lstm_kernel,
-                    dropout= lstm_dropout,
-                    recurrent_dropout=lstm_rec_dropout,
-                    padding="same",
-                    data_format="channels_last",
-                )
+    # with hp.conditional_scope('bidirectional', [False]):
+    lstm_filters = hp.Int('lstm_filters', min_value=16, max_value=64, step=8)
+    lstm_kernel = hp.Choice('lstm_kernel', values=[3, 5, 7, 9, 11])
+    lstm_dropout = hp.Float("lstm_dropout", min_value=0.0, max_value=0.5, step=0.1)
+    lstm_rec_dropout = hp.Float("lstm_rec_dropout", min_value=0.0, max_value=0.5, step=0.1)
+    if not bidirectional:
+        model.add(
+            keras.layers.ConvLSTM1D(
+                filters = lstm_filters,
+                kernel_size = lstm_kernel,
+                dropout= lstm_dropout,
+                recurrent_dropout=lstm_rec_dropout,
+                padding="same",
+                data_format="channels_last",
             )
-            model.add(keras.layers.BatchNormalization()) # Normalization technique 
-        
+        )
+        model.add(keras.layers.BatchNormalization()) # Normalization technique 
     
+
     # Flatten the output of the convolutional layers
     model.add(keras.layers.Flatten())
 
@@ -301,11 +302,11 @@ def build_model(hp: kt.HyperParameters,
 
 
 # Get the hyperparameter tuner
-def getHyperTuner(shape, classes) -> kt.Hyperband:
+def getHyperTuner(shape, classes, tuning_epochs) -> kt.Hyperband:
     tuner = kt.Hyperband(
         lambda hp: build_model(hp, input_shape=shape, num_classes=classes), # Function to build the model
-        objective="val_accuracy", # Objective to optimize
-        max_epochs=50, # Maximum number of epochs to train for
+        objective="val_loss", # Objective to optimize
+        max_epochs=tuning_epochs, # Maximum number of epochs to train for
         factor=3, # Reduction factor for the number of epochs and number of models
         hyperband_iterations=2, # Number of times to iterate over the hyperband algorithm
         directory="models", # Directory to save the models
@@ -320,7 +321,7 @@ def train_and_test(
                    save_model: bool = False, 
                    model_file: str = None,
                    ckpt_rate: int = 10,
-                   tuning_epochs: int = 10
+                   tuning_epochs: int = EPOCHS//5 
                 ) -> Tuple[dict, keras.Sequential]:
     """
     Train and test a model
@@ -371,7 +372,7 @@ def train_and_test(
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor="val_loss", patience=5, restore_best_weights=True
     )
-    callbacks.append(early_stopping)
+    # callbacks.append(early_stopping)
 
     # Tune before loading the model
     if HYPERTUNING:
@@ -379,10 +380,10 @@ def train_and_test(
         sleep(SLEEP_TIME)
 
         # Get the hyperparameter tuner
-        tuner = getHyperTuner(shape=shape, classes=6)
+        tuner = getHyperTuner(shape=shape, classes=6, tuning_epochs=tuning_epochs)
 
         # Search for the best hyperparameters
-        tuner.search(train_ds, validation_data=val_ds, epochs=tuning_epochs)
+        tuner.search(train_ds, validation_data=val_ds, epochs=epochs)
 
         # Get the best hyperparameters
         best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
